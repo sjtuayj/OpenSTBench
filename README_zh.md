@@ -123,7 +123,3 @@ Shell 示例：
 - 对离线环境，`clap_model_path` 可以传 Hugging Face repo id，也可以传本地模型目录或 snapshot。
 - 在 S2S 延迟评测中，若模型本身不产出文本，评测器可选用 ASR fallback 生成对齐文本。
 - 某些模块依赖可选依赖项或离线模型路径。
-
-## License
-
-MIT License
