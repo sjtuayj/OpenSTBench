@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "OpenST"
+version = "0.1.0"  
+description = "Open speech and translation benchmarking toolkit supporting MT, ASR, TTS, SimulST, VC, and paralinguistics with optimized CJK language support"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Yanjie An", email = "691476922@qq.com"}
+]
+
+keywords = [
+    "translation", "evaluation", "BLEU", "COMET", "BLEURT",
+    "ASR", "speech-synthesis", "voice-conversion", "UTMOS", "WER",
+    "machine-translation", "multilingual", "CJK", "emotion",
+    "paralinguistics", "CLAP", "audio-events"
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence", 
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    "torch>=1.9.0",
+    "torchaudio>=0.9.0",
+    "numpy",
+    "sacrebleu>=2.0.0",
+    "pandas",
+    "tqdm",
+    "scipy",
+    "soundfile",
+    "textgrid",
+    "transformers",    
+    "matplotlib",
+    "resemblyzer"
+]
+
+[project.urls]
+Homepage = "https://github.com/sjtuayj/OpenST"
+Repository = "https://github.com/sjtuayj/OpenST"
+Documentation = "https://github.com/sjtuayj/OpenST#readme"
+"Bug Tracker" = "https://github.com/sjtuayj/OpenST/issues"
+
+[project.optional-dependencies]
+comet = ["unbabel-comet>=2.2.2"]
+whisper = ["openai-whisper"]
+speech_quality = ["jiwer"]
+emotion = ["funasr", "modelscope"]  
+paralinguistics = ["transformers"]
+all = ["unbabel-comet>=2.2.2", "openai-whisper", "jiwer", "funasr", "modelscope", "transformers"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["openst*"]
