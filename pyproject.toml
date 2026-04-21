@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "OpenST"
-version = "0.1.0"  
+name = "OpenSTBench"
+version = "0.2.0"  
 description = "Open speech and translation benchmarking toolkit supporting MT, ASR, TTS, SimulST, VC, and paralinguistics with optimized CJK language support"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.8"
@@ -44,10 +44,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sjtuayj/OpenST"
-Repository = "https://github.com/sjtuayj/OpenST"
-Documentation = "https://github.com/sjtuayj/OpenST#readme"
-"Bug Tracker" = "https://github.com/sjtuayj/OpenST/issues"
+Homepage = "https://github.com/sjtuayj/OpenSTBench"
+Repository = "https://github.com/sjtuayj/OpenSTBench"
+Documentation = "https://github.com/sjtuayj/OpenSTBench#readme"
+"Bug Tracker" = "https://github.com/sjtuayj/OpenSTBench/issues"
 
 [project.optional-dependencies]
 comet = ["unbabel-comet>=2.2.2"]
@@ -62,4 +62,4 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["openst*"]
+include = ["openstbench*"]

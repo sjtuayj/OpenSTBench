@@ -1,4 +1,4 @@
-from openst import SpeechQualityEvaluator
+from openstbench import SpeechQualityEvaluator
 
 
 def main():

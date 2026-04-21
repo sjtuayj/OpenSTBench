@@ -158,7 +158,7 @@ def load_agent_from_file(path, class_name):
     return getattr(mod, class_name)
 
 def main():
-    parser = argparse.ArgumentParser(description="OpenST Latency Evaluator")
+    parser = argparse.ArgumentParser(description="OpenSTBench Latency Evaluator")
     parser.add_argument("--source", required=True)
     parser.add_argument("--target", default=None)
     parser.add_argument("--output", default="./output")

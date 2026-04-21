@@ -1,7 +1,7 @@
-"""Top-level exports for the ``openst`` package.
+"""Top-level exports for the ``openstbench`` package.
 
 This module keeps package import resilient to optional dependency failures.
-Importing ``openst`` should succeed even when a specific evaluator's
+Importing ``openstbench`` should succeed even when a specific evaluator's
 extra dependencies are missing; the failure is raised only when that symbol is
 actually accessed.
 """
@@ -9,7 +9,7 @@ actually accessed.
 from importlib import import_module
 from typing import Dict, Tuple
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "TranslationEvaluator",
@@ -133,8 +133,8 @@ def __getattr__(name: str):
     if name in _IMPORT_ERRORS:
         module_name, exc = _IMPORT_ERRORS[name]
         raise ImportError(
-            f"Cannot import '{name}' from 'openst' because "
-            f"'openst.{module_name}' failed to load: {exc}"
+            f"Cannot import '{name}' from 'openstbench' because "
+            f"'openstbench.{module_name}' failed to load: {exc}"
         ) from exc
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 

@@ -1,6 +1,6 @@
 import time
 
-from openst import GenericAgent, LatencyEvaluator, ReadAction, WriteAction
+from openstbench import GenericAgent, LatencyEvaluator, ReadAction, WriteAction
 
 
 class WaitUntilEndAgent(GenericAgent):

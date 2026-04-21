@@ -2,7 +2,7 @@
 
 # For S2S alignment, replace the MFA model names below with the target-language
 # acoustic and dictionary models that match your dataset.
-python -m openst.latency.cli \
+python -m openstbench.latency.cli \
   --source data/source.txt \
   --target data/ref.txt \
   --output ./output \

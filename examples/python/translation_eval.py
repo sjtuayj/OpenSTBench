@@ -1,4 +1,4 @@
-from openst import TranslationEvaluator
+from openstbench import TranslationEvaluator
 
 
 def main():

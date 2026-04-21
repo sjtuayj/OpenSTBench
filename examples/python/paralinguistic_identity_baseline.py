@@ -1,4 +1,4 @@
-from openst import evaluate_paralinguistic_dataset, load_paralinguistic_samples
+from openstbench import evaluate_paralinguistic_dataset, load_paralinguistic_samples
 
 
 LABEL_MAP = {

@@ -1,12 +1,12 @@
-# OpenST
+# OpenSTBench
 
 English | [Chinese](./README_zh.md)
 
-[![PyPI version](https://badge.fury.io/py/OpenST.svg)](https://pypi.org/project/OpenST/)
+[![PyPI version](https://badge.fury.io/py/OpenSTBench.svg)](https://pypi.org/project/OpenSTBench/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-OpenST is an evaluation toolkit centered on translation and speech translation. It provides a unified way to score text translation quality, speech output quality, preservation-related properties, and streaming latency.
+OpenSTBench is an evaluation toolkit centered on translation and speech translation. It provides a unified way to score text translation quality, speech output quality, preservation-related properties, and streaming latency.
 
 ## What It Can Be Used For
 
@@ -33,18 +33,18 @@ This project is best suited for these directions:
 Basic install:
 
 ```bash
-pip install OpenST
+pip install OpenSTBench
 ```
 
 Optional extras:
 
 ```bash
-pip install "OpenST[comet]"
-pip install "OpenST[whisper]"
-pip install "OpenST[speech_quality]"
-pip install "OpenST[emotion]"
-pip install "OpenST[paralinguistics]"
-pip install "OpenST[all]"
+pip install "OpenSTBench[comet]"
+pip install "OpenSTBench[whisper]"
+pip install "OpenSTBench[speech_quality]"
+pip install "OpenSTBench[emotion]"
+pip install "OpenSTBench[paralinguistics]"
+pip install "OpenSTBench[all]"
 ```
 
 If you need BLEURT:
@@ -58,19 +58,19 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 PyPI package name:
 
 ```python
-OpenST
+OpenSTBench
 ```
 
 Python import name:
 
 ```python
-openst
+openstbench
 ```
 
 Example:
 
 ```python
-from openst import TranslationEvaluator, SpeechQualityEvaluator
+from openstbench import TranslationEvaluator, SpeechQualityEvaluator
 ```
 
 ## Quick Start

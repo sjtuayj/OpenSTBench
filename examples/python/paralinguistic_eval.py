@@ -1,4 +1,4 @@
-from openst import ParalinguisticEvaluator
+from openstbench import ParalinguisticEvaluator
 
 
 LABEL_MAP = {

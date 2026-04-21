@@ -1,4 +1,4 @@
-from openst import EmotionEvaluator
+from openstbench import EmotionEvaluator
 
 
 def main():

@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Union
 
 # 数据集下载地址
 DATASET_URLS = {
-    "zh-en-littleprince": "https://github.com/sjtuayj/OpenST/releases/download/v0.1.0/zh-en-littleprince.zip",
+    "zh-en-littleprince": "https://github.com/sjtuayj/OpenSTBench/releases/download/v0.1.0/zh-en-littleprince.zip",
 }
 
 # 默认缓存目录

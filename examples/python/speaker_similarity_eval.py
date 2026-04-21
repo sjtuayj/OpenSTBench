@@ -1,4 +1,4 @@
-from openst import SpeakerSimilarityEvaluator
+from openstbench import SpeakerSimilarityEvaluator
 
 
 def main():
