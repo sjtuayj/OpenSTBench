@@ -7,6 +7,10 @@ def main():
         use_chrf=True,
         use_comet=False,
         use_bleurt=False,
+        # When enabled, comet_model and bleurt_path may point to local files or
+        # directories. Missing local paths fall back to the default remote ids.
+        # comet_model="./model/Unbabel/wmt22-comet-da",
+        # bleurt_path="./model/lucadiliello/BLEURT-20",
         device="cuda",
     )
 

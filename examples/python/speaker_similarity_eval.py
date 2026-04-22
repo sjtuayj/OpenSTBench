@@ -4,6 +4,9 @@ from openstbench import SpeakerSimilarityEvaluator
 def main():
     evaluator = SpeakerSimilarityEvaluator(
         model_type="both",
+        # You can also pass wavlm_model_path="./model/wavlm-base-plus-sv".
+        # If that local path does not exist, the evaluator falls back to the
+        # default remote model id.
         device="cuda",
     )
 

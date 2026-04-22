@@ -7,6 +7,7 @@ from typing import List, Dict, Optional, Union
 from tqdm import tqdm
 
 # 复用现有的加载工具
+from ._model_loading import resolve_pretrained_source
 from .translation_evaluator import load_text_from_file_or_list, load_audio_from_folder
 
 try:
@@ -15,6 +16,7 @@ except ImportError:
     whisper = None
 
 class SpeechQualityEvaluator:
+    DEFAULT_WHISPER_MODEL = "medium"
     """
     语音质量与一致性评测器
     专门用于：
@@ -24,7 +26,7 @@ class SpeechQualityEvaluator:
     def __init__(self, 
                  use_wer: bool = True,
                  use_utmos: bool = True,
-                 whisper_model: str = "medium",
+                 whisper_model: str = DEFAULT_WHISPER_MODEL,
                  utmos_model_path: Optional[str] = None,
                  utmos_ckpt_path: Optional[str] = None,
                  device: Optional[str] = None):
@@ -56,7 +58,12 @@ class SpeechQualityEvaluator:
                 self.use_wer = False
                 return
             print(f"⏳ 正在加载 Whisper ({self.whisper_model_name})...")
-            self.whisper_model = whisper.load_model(self.whisper_model_name, device=self.device)
+            model_source, source_kind = resolve_pretrained_source(
+                self.whisper_model_name,
+                fallback_source=self.DEFAULT_WHISPER_MODEL,
+            )
+            print(f"Loading Whisper ({source_kind}) from {model_source}...")
+            self.whisper_model = whisper.load_model(model_source, device=self.device)
 
     def _load_utmos(self):
         if self.utmos_model is None and self.use_utmos:

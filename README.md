@@ -16,6 +16,7 @@ This project is best suited for these directions:
 - S2ST evaluation by combining text quality, speech quality, speaker similarity, and latency
 - Streaming or simultaneous speech translation latency evaluation with a custom agent
 - Preservation analysis for speech translation outputs, including speaker similarity, emotion, and paralinguistic similarity
+- Temporal consistency analysis for speech translation or dubbing outputs, including duration compliance and duration error
 
 ## Core Modules
 
@@ -26,6 +27,7 @@ This project is best suited for these directions:
 | `SpeakerSimilarityEvaluator` | Speaker preservation | `wavlm_similarity`, `resemblyzer_similarity` |
 | `EmotionEvaluator` | Emotion preservation or classification accuracy | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
 | `ParalinguisticEvaluator` | Non-verbal and paralinguistic preservation | `Paralinguistic_Fidelity_Cosine`, `Acoustic_Event_Preservation_Rate`, `Acoustic_Event_Preservation_Macro_F1`, `Acoustic_Event_Preservation_Macro_Recall`, `Event_Aligned_Preservation_Rate`, `Conditional_Relative_Onset_Error` |
+| `TemporalConsistencyEvaluator` | Source-target temporal structure consistency | `Duration_Consistency_SLC_0.2`, `Duration_Consistency_SLC_0.4`, `Relative_Duration_Error_Mean`, `Log_Duration_Ratio_MAE` |
 | `LatencyEvaluator` | Streaming / simultaneous translation latency | `StartOffset`, `ATD`, `CustomATD`, `RTF`, `Model_Generate_RTF` |
 
 ## Installation
@@ -85,6 +87,7 @@ Python examples:
 - `examples/python/emotion_eval.py`
 - `examples/python/paralinguistic_eval.py`
 - `examples/python/paralinguistic_identity_baseline.py`
+- `examples/python/temporal_consistency_eval.py`
 - `examples/python/latency_eval.py`
 
 Shell examples:
@@ -117,6 +120,8 @@ Common audio inputs support:
 - For `zh` / `ja` / `ko`, the toolkit uses CJK-aware handling for text-side evaluation.
 - `SpeechQualityEvaluator` returns `CER_Consistency` for `zh` / `ja` / `ko`, and `WER_Consistency` for most other languages.
 - `ParalinguisticEvaluator` always supports `Paralinguistic_Fidelity_Cosine`, a continuous CLAP-based audio similarity score between source and target speech.
+- `TemporalConsistencyEvaluator` supports `List[str]`, audio folders, `.txt` path lists, and `.json` path lists for both `source_audio` and `target_audio`.
+- `TemporalConsistencyEvaluator` reports thresholded duration compliance metrics (`Duration_Consistency_SLC_*`) and continuous duration error metrics.
 - The discrete preservation branch is an utterance-level single-label task. With source-side gold labels, it reports `Acoustic_Event_Preservation_Rate`, `Acoustic_Event_Preservation_Macro_F1`, and `Acoustic_Event_Preservation_Macro_Recall`.
 - If `source_onsets_ms` are available, the evaluator can also report alignment-aware metrics: `Event_Aligned_Preservation_Rate` and `Conditional_Relative_Onset_Error`.
 - Alignment is computed on relative onset position, not absolute wall-clock time. This makes it suitable for cross-lingual S2ST where source and target utterance durations naturally differ.
@@ -127,6 +132,7 @@ Common audio inputs support:
 - The default event localizer is also replaceable. Custom localizers only need to implement `localize(audio_paths, labels, candidate_labels)`.
 - Dataset-specific label mapping is intentionally outside the core package. Pass `candidate_labels` and `label_normalizer` at call time so the same evaluator works across datasets without changing core code.
 - For offline environments, `clap_model_path` accepts either a Hugging Face repo id or a local model directory or snapshot.
+- Model-loading parameters such as `clap_model_path`, `wavlm_model_path`, `whisper_model`, `e2v_model_path`, `comet_model`, and `bleurt_path` now use a consistent local-first rule: if the supplied local path exists, it is used; otherwise the evaluator falls back to the default remote model id.
 - In S2S latency evaluation, alignment prefers the model's native transcript when available. If the model is audio-only, the evaluator can optionally use ASR fallback to prepare alignment text.
 - For S2S forced alignment, pass language-appropriate MFA models through `alignment_acoustic_model` and `alignment_dictionary_model`. The defaults are English.
 - Some modules rely on optional dependencies or local model paths in offline environments.

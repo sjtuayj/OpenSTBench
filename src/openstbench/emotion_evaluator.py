@@ -7,6 +7,8 @@ from typing import List, Dict, Optional, Union
 from tqdm import tqdm
 from numpy.linalg import norm
 
+from ._model_loading import resolve_pretrained_source
+
 def _load_data_list(
     input_data: Union[str, List[str]], 
     name: str,
@@ -97,7 +99,12 @@ class EmotionEvaluator:
         print(f"⏳ 正在加载 Emotion2Vec+ 大模型: {self.e2v_model_path}")
         try:
             from funasr import AutoModel
-            self.e2v_model = AutoModel(model=self.e2v_model_path, device=self.device, disable_update=True)
+            model_source, source_kind = resolve_pretrained_source(
+                self.e2v_model_path,
+                fallback_source=self.DEFAULT_E2V_MODEL,
+            )
+            print(f"Loading Emotion2Vec+ ({source_kind}) from {model_source}...")
+            self.e2v_model = AutoModel(model=model_source, device=self.device, disable_update=True)
             print("✅ Emotion2Vec+ 大模型加载成功！")
         except ImportError:
             print("❌ Emotion2Vec+ 依赖缺失。请执行: pip install funasr modelscope")

@@ -5,6 +5,10 @@ import os
 import librosa
 from tqdm import tqdm
 
+from ._model_loading import resolve_pretrained_source
+
+DEFAULT_WAVLM_MODEL_SOURCE = "microsoft/wavlm-base-plus-sv"
+
 # 如果你想用本地的 Resemblyzer，确保之前项目能 import 到
 try:
     from resemblyzer import preprocess_wav, VoiceEncoder
@@ -26,7 +30,7 @@ class SpeakerSimilarityEvaluator:
     def __init__(self, 
                  model_type="wavlm", 
                  device=None, 
-                 wavlm_model_path="microsoft/wavlm-base-plus-sv",
+                 wavlm_model_path=DEFAULT_WAVLM_MODEL_SOURCE,
                  resemblyzer_weights_path="pretrained.pt"):
         """
         初始化打分器，仅在初始化时加载一次模型。
@@ -50,9 +54,13 @@ class SpeakerSimilarityEvaluator:
         if self.model_type in ["wavlm", "both"]:
             if not TRANSFORMERS_AVAILABLE:
                 raise ImportError("Please install transformers to use WavLM: pip install transformers")
-            print(f"Loading WavLM from {wavlm_model_path}...")
-            self.wavlm_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(wavlm_model_path)
-            self.wavlm_model = WavLMForXVector.from_pretrained(wavlm_model_path).to(self.device).eval()
+            model_source, source_kind = resolve_pretrained_source(
+                wavlm_model_path,
+                fallback_source=DEFAULT_WAVLM_MODEL_SOURCE,
+            )
+            print(f"Loading WavLM ({source_kind}) from {model_source}...")
+            self.wavlm_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_source)
+            self.wavlm_model = WavLMForXVector.from_pretrained(model_source).to(self.device).eval()
 
         if self.model_type in ["resemblyzer", "both"]:
             if not RESEMBLYZER_AVAILABLE:

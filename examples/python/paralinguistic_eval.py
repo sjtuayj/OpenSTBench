@@ -32,7 +32,9 @@ def main():
         use_continuous_fidelity=True,
         use_event_preservation=True,
         use_event_alignment=True,
-        clap_model_path="./model/clap-htsat-fused",  # Or "laion/clap-htsat-fused"
+        # If this local path exists it is used first; otherwise the evaluator
+        # falls back to the default remote model id.
+        clap_model_path="./model/clap-htsat-fused",
         event_prediction_config={
             "score_threshold": 0.2,
             "fallback_top1": False,

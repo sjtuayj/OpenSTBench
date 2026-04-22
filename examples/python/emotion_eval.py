@@ -2,7 +2,12 @@ from openstbench import EmotionEvaluator
 
 
 def main():
-    evaluator = EmotionEvaluator(device="cuda")
+    evaluator = EmotionEvaluator(
+        # You can pass e2v_model_path="./model/emotion2vec_plus_large".
+        # If that local path does not exist, the evaluator falls back to the
+        # default remote model id.
+        device="cuda",
+    )
 
     preservation_results = evaluator.evaluate_all(
         source_audio="./src_wavs",

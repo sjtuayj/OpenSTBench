@@ -9,7 +9,7 @@ actually accessed.
 from importlib import import_module
 from typing import Dict, Tuple
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "TranslationEvaluator",
@@ -31,6 +31,7 @@ __all__ = [
     "build_paralinguistic_inputs",
     "evaluate_paralinguistic_dataset",
     "SpeechQualityEvaluator",
+    "TemporalConsistencyEvaluator",
     "LatencyEvaluator",
     "SpeakerSimilarityEvaluator",
     "GenericAgent",
@@ -79,6 +80,7 @@ _EXPORT_SPECS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
         ),
     ),
     ("speech_quality_evaluator", ("SpeechQualityEvaluator",)),
+    ("temporal_consistency_evaluator", ("TemporalConsistencyEvaluator",)),
     ("speaker_similarity_evaluator", ("SpeakerSimilarityEvaluator",)),
     (
         "dataset",

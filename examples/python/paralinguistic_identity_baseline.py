@@ -44,7 +44,9 @@ def main():
         evaluator_kwargs={
             "use_continuous_fidelity": True,
             "use_event_preservation": True,
-            "clap_model_path": "./model/clap-htsat-fused",  # Or a local snapshot path
+            # If this local path exists it is used first; otherwise the evaluator
+            # falls back to the default remote model id.
+            "clap_model_path": "./model/clap-htsat-fused",
             "event_prediction_config": {
                 "score_threshold": 0.2,
                 "fallback_top1": False,

@@ -7,6 +7,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import textgrid
 
+from .._model_loading import resolve_pretrained_source
+
 try:
     import whisper
 except ImportError:
@@ -98,10 +100,14 @@ def _load_whisper_model(model_name="medium", device=None):
         return None
     key = (model_name, device or "auto")
     if key not in _WHISPER_MODELS:
+        resolved_model_name, _source_kind = resolve_pretrained_source(
+            model_name,
+            fallback_source="medium",
+        )
         kwargs = {}
         if device:
             kwargs["device"] = device
-        _WHISPER_MODELS[key] = whisper.load_model(model_name, **kwargs)
+        _WHISPER_MODELS[key] = whisper.load_model(resolved_model_name, **kwargs)
     return _WHISPER_MODELS[key]
 
 

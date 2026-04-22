@@ -10,6 +10,8 @@ import torch
 from typing import Dict, List, Optional, Union
 from pathlib import Path
 
+from ._model_loading import resolve_pretrained_source
+
 # ==================== 配置 ====================
 
 CACHE_PATHS = {
@@ -88,6 +90,7 @@ def load_audio_from_folder(folder_path: str, extensions: tuple = (".wav", ".mp3"
 
 # ==================== 评测器核心类 ====================
 
+DEFAULT_COMET_MODEL = "Unbabel/wmt22-comet-da"
 DEFAULT_BLEURT_MODEL = "lucadiliello/BLEURT-20"
 
 class TranslationEvaluator:
@@ -100,7 +103,7 @@ class TranslationEvaluator:
                  use_chrf: bool = True,
                  use_comet: bool = True,      
                  use_bleurt: bool = False,    
-                 comet_model: str = "Unbabel/wmt22-comet-da",
+                 comet_model: str = DEFAULT_COMET_MODEL,
                  bleurt_path: Optional[str] = None,
                  bleurt_model: Optional[str] = None,
                  device: Optional[str] = None):
@@ -144,15 +147,43 @@ class TranslationEvaluator:
             torch.cuda.empty_cache()
         gc.collect()
 
+    def _resolve_local_comet_checkpoint(self, model_name: str) -> Optional[str]:
+        candidate = Path(model_name).expanduser()
+        if not candidate.exists():
+            return None
+
+        if candidate.is_file():
+            return str(candidate.resolve())
+
+        common_ckpts = [
+            candidate / "checkpoints" / "model.ckpt",
+            candidate / "model.ckpt",
+        ]
+        for ckpt in common_ckpts:
+            if ckpt.exists() and ckpt.is_file():
+                return str(ckpt.resolve())
+        return None
+
     def _load_comet(self, model_name: str):
         if not download_model:
             print("⚠️ COMET 未安装，跳过")
             return None
         try:
-            cache = os.path.join(CACHE_PATHS["huggingface"], f"models--{model_name.replace('/', '--')}")
-            status = "[Local]" if os.path.exists(cache) else "[Online]"
-            print(f"⏳ {status} 加载 COMET: {model_name}")
-            model = load_from_checkpoint(download_model(model_name))
+            model_source, source_kind = resolve_pretrained_source(
+                model_name,
+                fallback_source=DEFAULT_COMET_MODEL,
+            )
+            local_ckpt = self._resolve_local_comet_checkpoint(model_source)
+            if local_ckpt is not None:
+                print(f"⏳ [Local] 加载 COMET: {local_ckpt}")
+                model = load_from_checkpoint(local_ckpt)
+            else:
+                remote_source = model_source if source_kind == "remote" else DEFAULT_COMET_MODEL
+                cache = os.path.join(CACHE_PATHS["huggingface"], f"models--{remote_source.replace('/', '--')}")
+                status = "[Local]" if os.path.exists(cache) else "[Online]"
+                print(f"⏳ {status} 加载 COMET: {model_name}")
+                print(f"Loading COMET ({status}) from {remote_source}")
+                model = load_from_checkpoint(download_model(remote_source))
             if self.device.startswith("cuda"):
                 model = model.to(self.device)
             return model
@@ -165,7 +196,13 @@ class TranslationEvaluator:
             print("⚠️ bleurt-pytorch 未安装，跳过加载")
             return
         
-        model_source = path if (path and os.path.exists(path)) else (model_name or DEFAULT_BLEURT_MODEL)
+        if path:
+            model_source, _source_kind = resolve_pretrained_source(
+                path,
+                fallback_source=model_name or DEFAULT_BLEURT_MODEL,
+            )
+        else:
+            model_source, _source_kind = resolve_pretrained_source(model_name or DEFAULT_BLEURT_MODEL)
         print(f"⏳ 加载 BLEURT: {model_source}")
         
         try:

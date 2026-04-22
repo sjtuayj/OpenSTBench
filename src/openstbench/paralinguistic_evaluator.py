@@ -9,8 +9,11 @@ import torch
 import torchaudio
 from tqdm import tqdm
 
+from ._model_loading import resolve_pretrained_source
+
 
 LabelNormalizer = Optional[Union[Dict[str, Optional[str]], Callable[[str], Optional[str]]]]
+DEFAULT_CLAP_MODEL_SOURCE = "laion/clap-htsat-fused"
 
 
 @dataclass(frozen=True)
@@ -524,7 +527,7 @@ class ClapAudioEventPredictor(BaseAudioEventPredictor):
     def __init__(
         self,
         *,
-        model_path: str = "laion/clap-htsat-fused",
+        model_path: str = DEFAULT_CLAP_MODEL_SOURCE,
         config: Optional[EventPredictionConfig] = None,
         device: Optional[str] = None,
     ) -> None:
@@ -544,8 +547,13 @@ class ClapAudioEventPredictor(BaseAudioEventPredictor):
         except ImportError as exc:
             raise RuntimeError("CLAP-based event prediction requires `transformers`.") from exc
 
-        self._processor = ClapProcessor.from_pretrained(self.model_path)
-        self._model = ClapModel.from_pretrained(self.model_path).to(self.device).eval()
+        model_source, source_kind = resolve_pretrained_source(
+            self.model_path,
+            fallback_source=DEFAULT_CLAP_MODEL_SOURCE,
+        )
+        print(f"Loading CLAP ({source_kind}) from {model_source}...")
+        self._processor = ClapProcessor.from_pretrained(model_source)
+        self._model = ClapModel.from_pretrained(model_source).to(self.device).eval()
 
     @staticmethod
     def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
@@ -691,7 +699,7 @@ class ClapSlidingWindowEventLocalizer(BaseAudioEventLocalizer):
     def __init__(
         self,
         *,
-        model_path: str = "laion/clap-htsat-fused",
+        model_path: str = DEFAULT_CLAP_MODEL_SOURCE,
         prediction_config: Optional[EventPredictionConfig] = None,
         localization_config: Optional[EventLocalizationConfig] = None,
         device: Optional[str] = None,
@@ -801,7 +809,7 @@ class ClapSlidingWindowEventLocalizer(BaseAudioEventLocalizer):
 
 
 class ParalinguisticEvaluator:
-    DEFAULT_CLAP_MODEL = "laion/clap-htsat-fused"
+    DEFAULT_CLAP_MODEL = DEFAULT_CLAP_MODEL_SOURCE
 
     def __init__(
         self,
@@ -842,8 +850,13 @@ class ParalinguisticEvaluator:
         except ImportError as exc:
             raise RuntimeError("Paralinguistic_Fidelity_Cosine requires `transformers` to load CLAP.") from exc
 
-        self._clap_processor = ClapProcessor.from_pretrained(self.clap_model_path)
-        self._clap_model = ClapModel.from_pretrained(self.clap_model_path).to(self.device).eval()
+        model_source, source_kind = resolve_pretrained_source(
+            self.clap_model_path,
+            fallback_source=self.DEFAULT_CLAP_MODEL,
+        )
+        print(f"Loading CLAP ({source_kind}) from {model_source}...")
+        self._clap_processor = ClapProcessor.from_pretrained(model_source)
+        self._clap_model = ClapModel.from_pretrained(model_source).to(self.device).eval()
 
     def _extract_clap_embeddings(self, audio_paths: Sequence[str]) -> List[np.ndarray]:
         self._load_clap()
