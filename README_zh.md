@@ -125,7 +125,3 @@ Shell 示例：
 - `clap_model_path`、`wavlm_model_path`、`whisper_model`、`e2v_model_path`、`comet_model`、`bleurt_path` 等模型参数现在统一采用“本地优先”规则：如果传入的本地路径存在，就优先使用本地；如果不存在，则回退到默认远端模型 id。
 - 在 S2S 延迟评测中，若模型本身不产出文本，评测器可选用 ASR fallback 生成对齐文本。
 - 某些模块依赖可选依赖项或离线模型路径。
-
-## License
-
-MIT License

@@ -136,7 +136,3 @@ Common audio inputs support:
 - In S2S latency evaluation, alignment prefers the model's native transcript when available. If the model is audio-only, the evaluator can optionally use ASR fallback to prepare alignment text.
 - For S2S forced alignment, pass language-appropriate MFA models through `alignment_acoustic_model` and `alignment_dictionary_model`. The defaults are English.
 - Some modules rely on optional dependencies or local model paths in offline environments.
-
-## License
-
-MIT License
