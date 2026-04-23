@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import math
 import torchaudio
 
 
@@ -12,8 +11,6 @@ class TemporalConsistencyEvaluator:
     def __init__(
         self,
         thresholds: Sequence[float] = (0.2, 0.4),
-        use_relative_error: bool = True,
-        use_log_ratio_error: bool = True,
     ) -> None:
         if not thresholds:
             raise ValueError("thresholds must contain at least one value.")
@@ -29,8 +26,6 @@ class TemporalConsistencyEvaluator:
             normalized_thresholds.append(value)
 
         self.thresholds = tuple(sorted(set(normalized_thresholds)))
-        self.use_relative_error = bool(use_relative_error)
-        self.use_log_ratio_error = bool(use_log_ratio_error)
 
     def _load_audio_from_folder(self, folder_path: str, name: str) -> List[str]:
         folder = Path(folder_path)
@@ -129,8 +124,6 @@ class TemporalConsistencyEvaluator:
         metrics: Dict[str, float] = {}
         sample_records: List[Dict[str, Any]] = []
         valid_ratios: List[float] = []
-        relative_errors: List[float] = []
-        log_ratio_errors: List[float] = []
         hit_counts = {threshold: 0 for threshold in self.thresholds}
         skipped = 0
 
@@ -151,12 +144,7 @@ class TemporalConsistencyEvaluator:
                 continue
 
             ratio = float(target_ms / source_ms)
-            relative_error = abs(ratio - 1.0)
-            log_ratio_abs = abs(math.log(ratio))
-
             valid_ratios.append(ratio)
-            relative_errors.append(relative_error)
-            log_ratio_errors.append(log_ratio_abs)
 
             slc_hits: Dict[str, bool] = {}
             for threshold in self.thresholds:
@@ -169,8 +157,6 @@ class TemporalConsistencyEvaluator:
                 {
                     "valid": True,
                     "duration_ratio": round(ratio, 6),
-                    "relative_duration_error": round(relative_error, 6),
-                    "log_duration_ratio_abs": round(log_ratio_abs, 6),
                     "slc_hits": slc_hits,
                 }
             )
@@ -181,14 +167,6 @@ class TemporalConsistencyEvaluator:
             suffix = self._threshold_suffix(threshold)
             score = float(hit_counts[threshold] / num_evaluated) if num_evaluated > 0 else 0.0
             metrics[f"Duration_Consistency_SLC_{suffix}"] = round(score, 4)
-
-        if self.use_relative_error:
-            relative_mean = sum(relative_errors) / num_evaluated if num_evaluated > 0 else 0.0
-            metrics["Relative_Duration_Error_Mean"] = round(float(relative_mean), 4)
-
-        if self.use_log_ratio_error:
-            log_ratio_mean = sum(log_ratio_errors) / num_evaluated if num_evaluated > 0 else 0.0
-            metrics["Log_Duration_Ratio_MAE"] = round(float(log_ratio_mean), 4)
 
         diagnostics: Dict[str, Any] = {
             "num_samples": len(source_durations_ms),

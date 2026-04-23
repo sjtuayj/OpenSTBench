@@ -27,7 +27,7 @@ This project is best suited for these directions:
 | `SpeakerSimilarityEvaluator` | Speaker preservation | `wavlm_similarity`, `resemblyzer_similarity` |
 | `EmotionEvaluator` | Emotion preservation or classification accuracy | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
 | `ParalinguisticEvaluator` | Non-verbal and paralinguistic preservation | `Paralinguistic_Fidelity_Cosine`, `Acoustic_Event_Preservation_Rate`, `Acoustic_Event_Preservation_Macro_F1`, `Acoustic_Event_Preservation_Macro_Recall`, `Event_Aligned_Preservation_Rate`, `Conditional_Relative_Onset_Error` |
-| `TemporalConsistencyEvaluator` | Source-target temporal structure consistency | `Duration_Consistency_SLC_0.2`, `Duration_Consistency_SLC_0.4`, `Relative_Duration_Error_Mean`, `Log_Duration_Ratio_MAE` |
+| `TemporalConsistencyEvaluator` | Source-target temporal structure consistency | `Duration_Consistency_SLC_0.2`, `Duration_Consistency_SLC_0.4` |
 | `LatencyEvaluator` | Streaming / simultaneous translation latency | `StartOffset`, `ATD`, `CustomATD`, `RTF`, `Model_Generate_RTF` |
 
 ## Installation
@@ -72,7 +72,11 @@ openstbench
 Example:
 
 ```python
-from openstbench import TranslationEvaluator, SpeechQualityEvaluator
+from openstbench import (
+    TranslationEvaluator,
+    SpeechQualityEvaluator,
+    TemporalConsistencyEvaluator,
+)
 ```
 
 ## Quick Start
@@ -94,6 +98,23 @@ Shell examples:
 
 - `examples/bash/install_extras.sh`
 - `examples/bash/run_latency_cli.sh`
+
+Minimal temporal consistency example:
+
+```python
+from openstbench import TemporalConsistencyEvaluator
+
+evaluator = TemporalConsistencyEvaluator(
+    thresholds=(0.2, 0.4),
+)
+
+results, diagnostics = evaluator.evaluate_all(
+    source_audio="./source_wavs",
+    target_audio="./generated_wavs",
+    sample_ids=["sample_1", "sample_2"],
+    return_diagnostics=True,
+)
+```
 
 Latency output distinguishes two RTF variants:
 
@@ -121,7 +142,7 @@ Common audio inputs support:
 - `SpeechQualityEvaluator` returns `CER_Consistency` for `zh` / `ja` / `ko`, and `WER_Consistency` for most other languages.
 - `ParalinguisticEvaluator` always supports `Paralinguistic_Fidelity_Cosine`, a continuous CLAP-based audio similarity score between source and target speech.
 - `TemporalConsistencyEvaluator` supports `List[str]`, audio folders, `.txt` path lists, and `.json` path lists for both `source_audio` and `target_audio`.
-- `TemporalConsistencyEvaluator` reports thresholded duration compliance metrics (`Duration_Consistency_SLC_*`) and continuous duration error metrics.
+- `TemporalConsistencyEvaluator` reports thresholded duration compliance metrics (`Duration_Consistency_SLC_*`).
 - The discrete preservation branch is an utterance-level single-label task. With source-side gold labels, it reports `Acoustic_Event_Preservation_Rate`, `Acoustic_Event_Preservation_Macro_F1`, and `Acoustic_Event_Preservation_Macro_Recall`.
 - If `source_onsets_ms` are available, the evaluator can also report alignment-aware metrics: `Event_Aligned_Preservation_Rate` and `Conditional_Relative_Onset_Error`.
 - Alignment is computed on relative onset position, not absolute wall-clock time. This makes it suitable for cross-lingual S2ST where source and target utterance durations naturally differ.
@@ -136,3 +157,7 @@ Common audio inputs support:
 - In S2S latency evaluation, alignment prefers the model's native transcript when available. If the model is audio-only, the evaluator can optionally use ASR fallback to prepare alignment text.
 - For S2S forced alignment, pass language-appropriate MFA models through `alignment_acoustic_model` and `alignment_dictionary_model`. The defaults are English.
 - Some modules rely on optional dependencies or local model paths in offline environments.
+
+## License
+
+MIT License

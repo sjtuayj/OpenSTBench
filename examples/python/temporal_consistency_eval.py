@@ -2,10 +2,10 @@ from openstbench import TemporalConsistencyEvaluator
 
 
 def main():
+    # The evaluator accepts folders, .txt/.json path lists, or Python lists
+    # for both source_audio and target_audio.
     evaluator = TemporalConsistencyEvaluator(
         thresholds=(0.2, 0.4),
-        use_relative_error=True,
-        use_log_ratio_error=True,
     )
 
     results, diagnostics = evaluator.evaluate_all(
@@ -17,6 +17,8 @@ def main():
     )
 
     print(results)
+    # Per-sample diagnostics include source/target duration pairs and
+    # thresholded consistency flags.
     print(diagnostics["samples"][:2])
 
 

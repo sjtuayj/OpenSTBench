@@ -104,14 +104,14 @@ class LatencyEvaluator:
         # 2. 智能化筛选最高级/最准确的一个版本展示给用户
         cleaned_results = {}
         
-        # [A] 评估: 第一声开口延迟 (StartOffset/ALAL)
+        # [A] 评估: 第一声开口延迟 (StartOffset)
         so_key = "StartOffset_CA" if computation_aware else "StartOffset"
         align_so_key = "StartOffset_SpeechAlign_CA" if computation_aware else "StartOffset_SpeechAlign"
         
         if results.get(align_so_key) is not None and results[align_so_key] > 0:
-            cleaned_results["First_Audio_Delay_(ALAL_ms)"] = results[align_so_key]
+            cleaned_results["First_Audio_Delay_(StartOffset_ms)"] = results[align_so_key]
         else:
-            cleaned_results["First_Audio_Delay_(ALAL_ms)"] = results.get(so_key, 0)
+            cleaned_results["First_Audio_Delay_(StartOffset_ms)"] = results.get(so_key, 0)
             
         # [B] 评估: 整句同传综合延迟 (标准版 ATD: 连同阅读/播放音频时间一起计算)
         atd_key = "ATD_CA" if computation_aware else "ATD"
