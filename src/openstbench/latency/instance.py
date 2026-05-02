@@ -80,7 +80,8 @@ class SpeechToTextInstance(Instance):
     def len_sample_to_ms(self, length): return length * 1000 / self.sample_rate
 
     def send_source(self, segment_size=10):
-        if self.step == 0: self.start_time = time.time()
+        if self.step == 0 and self.start_time is None:
+            self.start_time = time.perf_counter()
         num_samples = math.ceil(segment_size / 1000 * self.sample_rate)
         
         if self.step < len(self.samples):
@@ -105,13 +106,13 @@ class SpeechToTextInstance(Instance):
         if getattr(seg, "config", None):
             self.add_model_inference_time(seg.config.get("model_inference_time"))
         
-        current_time = time.time()
+        current_time = time.perf_counter()
         content_list = seg.content.strip().split()
         self.prediction_list += content_list
         self.append_prediction_text(seg.content, source="native_transcript")
         
         curr_delay = self.len_sample_to_ms(self.step)
-        curr_elapsed = curr_delay + (current_time - self.start_time) * 1000
+        curr_elapsed = (current_time - self.start_time) * 1000
         
         self.delays += [curr_delay] * len(content_list)
         self.elapsed += [curr_elapsed] * len(content_list)
@@ -134,7 +135,8 @@ class SpeechToSpeechInstance(SpeechToTextInstance):
             self.finish_prediction = seg.finished
             return
         if not seg.content: return
-        if not self.start_time: self.start_time = time.time()
+        if not self.start_time:
+            self.start_time = time.perf_counter()
         if getattr(seg, "config", None):
             self.add_model_inference_time(seg.config.get("model_inference_time"))
             transcript = seg.config.get("transcript")
@@ -142,7 +144,7 @@ class SpeechToSpeechInstance(SpeechToTextInstance):
                 source = seg.config.get("transcript_source", "native_transcript")
                 self.append_prediction_text(transcript, source=source)
         
-        current_time = time.time()
+        current_time = time.perf_counter()
         duration_ms = len(seg.content) * 1000 / seg.sample_rate
         self.target_sample_rate = seg.sample_rate
         
@@ -150,7 +152,7 @@ class SpeechToSpeechInstance(SpeechToTextInstance):
         self.durations.append(duration_ms)
         
         curr_delay = self.len_sample_to_ms(self.step)
-        curr_elapsed = curr_delay + (current_time - self.start_time) * 1000
+        curr_elapsed = (current_time - self.start_time) * 1000
         
         self.delays.append(curr_delay)
         self.elapsed.append(curr_elapsed)

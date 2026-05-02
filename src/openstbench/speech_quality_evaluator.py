@@ -27,6 +27,7 @@ class SpeechQualityEvaluator:
                  use_wer: bool = True,
                  use_utmos: bool = True,
                  whisper_model: str = DEFAULT_WHISPER_MODEL,
+                 whisper_language: Optional[str] = None,
                  utmos_model_path: Optional[str] = None,
                  utmos_ckpt_path: Optional[str] = None,
                  device: Optional[str] = None):
@@ -36,6 +37,7 @@ class SpeechQualityEvaluator:
         self.use_utmos = use_utmos
         
         self.whisper_model_name = whisper_model
+        self.whisper_language = self._normalize_whisper_language(whisper_language)
         self.utmos_path = utmos_model_path
         self.utmos_ckpt = utmos_ckpt_path
         
@@ -50,6 +52,21 @@ class SpeechQualityEvaluator:
                 jiwer.Strip(),
                 jiwer.RemoveEmptyStrings(),
             ])
+
+    @staticmethod
+    def _normalize_whisper_language(language: Optional[str]) -> Optional[str]:
+        if language is None:
+            return None
+        normalized = str(language).strip().lower()
+        if normalized in {"zh", "zh-cn", "cmn", "<|cmn|>"}:
+            return "zh"
+        if normalized in {"en", "eng", "<|eng|>"}:
+            return "en"
+        if normalized in {"ja", "jp", "jpn"}:
+            return "ja"
+        if normalized in {"ko", "kor"}:
+            return "ko"
+        return normalized or None
 
     def _load_whisper(self):
         if self.whisper_model is None and self.use_wer:
@@ -93,7 +110,20 @@ class SpeechQualityEvaluator:
         self._load_whisper()
         if not self.whisper_model:
             return [""] * len(audio_paths)
-            
+
+        transcribe_kwargs = {
+            "fp16": torch.cuda.is_available() and "cuda" in self.device,
+            "task": "transcribe",
+        }
+        if self.whisper_language:
+            transcribe_kwargs["language"] = self.whisper_language
+
+        results = []
+        for path in tqdm(audio_paths, desc="Whisper transcription"):
+            res = self.whisper_model.transcribe(path, **transcribe_kwargs)
+            results.append(res["text"].strip())
+        return results
+
         results = []
         for path in tqdm(audio_paths, desc="🎙️ Whisper 转写中"):
             res = self.whisper_model.transcribe(path, fp16=torch.cuda.is_available() and "cuda" in self.device)

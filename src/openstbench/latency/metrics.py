@@ -86,6 +86,30 @@ class LatencyScorer:
     def subtract(self, arr1, arr2):
         return [x - y for x, y in zip(arr1, arr2)]
 
+    def get_incremental_compute_times(self, ins, count):
+        if not self.computation_aware:
+            return [0.0] * count
+
+        elapsed = list(getattr(ins, "elapsed", []) or [])
+        delays = list(getattr(ins, "delays", []) or [])
+        if not elapsed or not delays:
+            return [0.0] * count
+
+        limit = min(len(elapsed), len(delays), count)
+        if limit <= 0:
+            return [0.0] * count
+
+        compute_elapsed = [max(0.0, e - d) for e, d in zip(elapsed[:limit], delays[:limit])]
+        incremental = []
+        prev = 0.0
+        for value in compute_elapsed:
+            incremental.append(max(0.0, value - prev))
+            prev = value
+
+        if limit < count:
+            incremental.extend([0.0] * (count - limit))
+        return incremental
+
     def get_delays(self, ins):
         override = getattr(ins, "_alignment_delays", None)
         if override is not None:
@@ -226,12 +250,7 @@ class ATDScorer(LatencyScorer):
                         compute_times.append(0.0)
                 else:
                     base_emit_delays = list(getattr(ins, "delays", []) or [])
-                    text_compute_times = []
-                    if self.computation_aware and getattr(ins, "elapsed", None):
-                        compute_elapsed = self.subtract(ins.elapsed, ins.delays)
-                        text_compute_times = self.subtract(compute_elapsed, [0] + compute_elapsed[:-1])
-                    else:
-                        text_compute_times = [0.0] * len(delays)
+                    text_compute_times = self.get_incremental_compute_times(ins, len(delays))
 
                     for idx, delay in enumerate(delays):
                         emit_delay = base_emit_delays[idx] if idx < len(base_emit_delays) else delay
@@ -239,19 +258,18 @@ class ATDScorer(LatencyScorer):
                         target_delays.append(float(delay))
                         target_chunk_ids.append(source_chunk_id)
                         target_token_lens.append(0.0)
-                        compute_times.append(float(text_compute_times[idx]) if idx < len(text_compute_times) else 0.0)
+                        extra_compute = 0.0 if self.computation_aware else float(text_compute_times[idx])
+                        compute_times.append(extra_compute)
             else:
-                speech_compute_times = []
-                if self.computation_aware and getattr(ins, "elapsed", None):
-                    compute_elapsed = self.subtract(ins.elapsed, ins.delays)
-                    speech_compute_times = self.subtract(compute_elapsed, [0] + compute_elapsed[:-1])
-                else:
-                    speech_compute_times = [0.0] * len(delays)
+                speech_compute_times = self.get_incremental_compute_times(ins, len(delays))
 
                 for idx, duration_ms in enumerate(getattr(ins, "durations", []) or []):
                     source_chunk_id = self.source_chunk_id_from_delay(source_boundaries, ins.delays[idx])
                     token_lens = self.split_duration_into_tokens(duration_ms, token_len_ms=300.0)
-                    per_token_compute = float(speech_compute_times[idx]) / len(token_lens) if token_lens else 0.0
+                    if self.computation_aware:
+                        per_token_compute = 0.0
+                    else:
+                        per_token_compute = float(speech_compute_times[idx]) / len(token_lens) if token_lens else 0.0
                     for token_len in token_lens:
                         target_delays.append(float(delays[idx]))
                         target_chunk_ids.append(source_chunk_id)
@@ -328,31 +346,25 @@ class CustomATD(ATDScorer):
                         compute_times.append(0.0)
                 else:
                     base_emit_delays = list(getattr(ins, "delays", []) or [])
-                    text_compute_times = []
-                    if self.computation_aware and getattr(ins, "elapsed", None):
-                        compute_elapsed = self.subtract(ins.elapsed, ins.delays)
-                        text_compute_times = self.subtract(compute_elapsed, [0] + compute_elapsed[:-1])
-                    else:
-                        text_compute_times = [0.0] * len(delays)
+                    text_compute_times = self.get_incremental_compute_times(ins, len(delays))
 
                     for idx, delay in enumerate(delays):
                         emit_delay = base_emit_delays[idx] if idx < len(base_emit_delays) else delay
                         source_chunk_id = self.source_chunk_id_from_delay(source_boundaries, emit_delay)
                         target_delays.append(float(delay))
                         target_chunk_ids.append(source_chunk_id)
-                        compute_times.append(float(text_compute_times[idx]) if idx < len(text_compute_times) else 0.0)
+                        extra_compute = 0.0 if self.computation_aware else float(text_compute_times[idx])
+                        compute_times.append(extra_compute)
             else:
-                speech_compute_times = []
-                if self.computation_aware and getattr(ins, "elapsed", None):
-                    compute_elapsed = self.subtract(ins.elapsed, ins.delays)
-                    speech_compute_times = self.subtract(compute_elapsed, [0] + compute_elapsed[:-1])
-                else:
-                    speech_compute_times = [0.0] * len(delays)
+                speech_compute_times = self.get_incremental_compute_times(ins, len(delays))
 
                 for idx, duration_ms in enumerate(getattr(ins, "durations", []) or []):
                     source_chunk_id = self.source_chunk_id_from_delay(source_boundaries, ins.delays[idx])
                     token_lens = self.split_duration_into_tokens(duration_ms, token_len_ms=300.0)
-                    per_token_compute = float(speech_compute_times[idx]) / len(token_lens) if token_lens else 0.0
+                    if self.computation_aware:
+                        per_token_compute = 0.0
+                    else:
+                        per_token_compute = float(speech_compute_times[idx]) / len(token_lens) if token_lens else 0.0
                     for _ in token_lens:
                         target_delays.append(float(delays[idx]))
                         target_chunk_ids.append(source_chunk_id)
