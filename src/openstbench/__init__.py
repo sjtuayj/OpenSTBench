@@ -9,20 +9,17 @@ actually accessed.
 from importlib import import_module
 from typing import Dict, Tuple
 
-__version__ = "0.3.3"
+__version__ = "0.3.5"
 
 __all__ = [
     "TranslationEvaluator",
     "EmotionEvaluator",
+    "AcousticEvent",
     "ParalinguisticEvaluator",
-    "BaseAudioEventPredictor",
     "BaseAudioEventLocalizer",
-    "ClapAudioEventPredictor",
     "ClapSlidingWindowEventLocalizer",
-    "EventAlignmentConfig",
-    "EventLocalization",
+    "EventMatchingConfig",
     "EventLocalizationConfig",
-    "EventPrediction",
     "EventPredictionConfig",
     "ParalinguisticSample",
     "load_paralinguistic_manifest",
@@ -61,14 +58,11 @@ _EXPORT_SPECS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     (
         "paralinguistic_evaluator",
         (
-            "BaseAudioEventPredictor",
+            "AcousticEvent",
             "BaseAudioEventLocalizer",
-            "ClapAudioEventPredictor",
             "ClapSlidingWindowEventLocalizer",
-            "EventAlignmentConfig",
-            "EventLocalization",
+            "EventMatchingConfig",
             "EventLocalizationConfig",
-            "EventPrediction",
             "EventPredictionConfig",
             "ParalinguisticEvaluator",
             "ParalinguisticSample",

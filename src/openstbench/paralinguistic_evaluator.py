@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import soundfile as sf
 import torch
 import torchaudio
 from tqdm import tqdm
@@ -17,45 +18,8 @@ DEFAULT_CLAP_MODEL_SOURCE = "laion/clap-htsat-fused"
 
 
 @dataclass(frozen=True)
-class ParalinguisticSample:
-    sample_id: str
-    source_audio: str
-    source_text: str = ""
-    source_label: Optional[str] = None
-    source_onset_ms: Optional[float] = None
-    source_offset_ms: Optional[float] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class EventPrediction:
-    label: Optional[str]
-    score: Optional[float] = None
-    scores: Dict[str, float] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "label": self.label,
-            "score": None if self.score is None else float(self.score),
-            "scores": {str(key): float(value) for key, value in self.scores.items()},
-        }
-
-
-@dataclass(frozen=True)
-class EventPredictionConfig:
-    score_threshold: float = 0.2
-    fallback_top1: bool = False
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "score_threshold": float(self.score_threshold),
-            "fallback_top1": bool(self.fallback_top1),
-        }
-
-
-@dataclass(frozen=True)
-class EventLocalization:
-    label: Optional[str]
+class AcousticEvent:
+    label: str
     onset_ms: Optional[float] = None
     offset_ms: Optional[float] = None
     score: Optional[float] = None
@@ -70,23 +34,42 @@ class EventLocalization:
 
 
 @dataclass(frozen=True)
+class ParalinguisticSample:
+    sample_id: str
+    source_audio: str
+    source_text: str = ""
+    source_events: Tuple[AcousticEvent, ...] = field(default_factory=tuple)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class EventPredictionConfig:
+    score_threshold: float = 0.2
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "score_threshold": float(self.score_threshold),
+        }
+
+
+@dataclass(frozen=True)
 class EventLocalizationConfig:
     window_ms: float = 320.0
     hop_ms: float = 40.0
-    score_threshold: Optional[float] = None
-    fallback_top1: Optional[bool] = None
+    merge_gap_ms: float = 80.0
+    min_duration_ms: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "window_ms": float(self.window_ms),
             "hop_ms": float(self.hop_ms),
-            "score_threshold": None if self.score_threshold is None else float(self.score_threshold),
-            "fallback_top1": None if self.fallback_top1 is None else bool(self.fallback_top1),
+            "merge_gap_ms": float(self.merge_gap_ms),
+            "min_duration_ms": float(self.min_duration_ms),
         }
 
 
 @dataclass(frozen=True)
-class EventAlignmentConfig:
+class EventMatchingConfig:
     relative_onset_tolerance: float = 0.15
 
     def to_dict(self) -> Dict[str, Any]:
@@ -95,24 +78,13 @@ class EventAlignmentConfig:
         }
 
 
-class BaseAudioEventPredictor(ABC):
-    @abstractmethod
-    def predict(
-        self,
-        audio_paths: Sequence[str],
-        candidate_labels: Sequence[str],
-    ) -> List[EventPrediction]:
-        raise NotImplementedError
-
-
 class BaseAudioEventLocalizer(ABC):
     @abstractmethod
     def localize(
         self,
         audio_paths: Sequence[str],
-        labels: Sequence[Optional[str]],
         candidate_labels: Sequence[str],
-    ) -> List[EventLocalization]:
+    ) -> List[List[AcousticEvent]]:
         raise NotImplementedError
 
 
@@ -134,14 +106,26 @@ def _load_audio_mono(audio_path: str, target_sr: Optional[int] = None) -> Tuple[
     if not path.exists():
         raise FileNotFoundError(f"Audio not found: {audio_path}")
 
-    waveform, sr = torchaudio.load(str(path))
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
-    if target_sr is not None and sr != target_sr:
-        waveform = torchaudio.functional.resample(waveform, sr, target_sr)
-        sr = target_sr
-    waveform = waveform.squeeze(0).contiguous().float().cpu().numpy()
-    return waveform, int(sr)
+    try:
+        waveform, sr = torchaudio.load(str(path))
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        if target_sr is not None and sr != target_sr:
+            waveform = torchaudio.functional.resample(waveform, sr, target_sr)
+            sr = target_sr
+        waveform = waveform.squeeze(0).contiguous().float().cpu().numpy()
+        return waveform, int(sr)
+    except Exception:
+        waveform, sr = sf.read(str(path), always_2d=False)
+        waveform = np.asarray(waveform, dtype=np.float32)
+        if waveform.ndim > 1:
+            waveform = waveform.mean(axis=1)
+        if target_sr is not None and int(sr) != int(target_sr):
+            tensor = torch.from_numpy(waveform).unsqueeze(0)
+            tensor = torchaudio.functional.resample(tensor, int(sr), int(target_sr))
+            waveform = tensor.squeeze(0).contiguous().float().cpu().numpy()
+            sr = int(target_sr)
+        return waveform.reshape(-1), int(sr)
 
 
 def _get_audio_duration_ms(audio_path: str) -> float:
@@ -183,102 +167,28 @@ def _apply_label_normalizer(label: Optional[str], label_normalizer: LabelNormali
     return mapped_text or None
 
 
-def _coerce_manifest_source_label(raw_label: Any, index: int) -> Optional[str]:
-    if raw_label is None:
-        return None
-
-    if isinstance(raw_label, list):
-        cleaned = []
-        for item in raw_label:
-            label = _normalize_text_label(str(item))
-            if label and label not in cleaned:
-                cleaned.append(label)
-        if not cleaned:
-            return None
-        if len(cleaned) > 1:
-            raise ValueError(
-                f"Manifest item {index} has multiple source labels {cleaned}. "
-                "This evaluator expects at most one source event label per sample."
-            )
-        return cleaned[0]
-
-    label = _normalize_text_label(str(raw_label))
-    return label or None
-
-
-def _coerce_optional_float(raw_value: Any, *, name: str, index: int) -> Optional[float]:
+def _coerce_optional_float(raw_value: Any, *, name: str, index: int, event_index: Optional[int] = None) -> Optional[float]:
     if raw_value is None:
         return None
     if isinstance(raw_value, bool):
-        raise ValueError(f"{name} for manifest item {index} must be numeric or null.")
+        location = f"manifest item {index}" if event_index is None else f"manifest item {index} event {event_index}"
+        raise ValueError(f"{name} for {location} must be numeric or null.")
     try:
         value = float(raw_value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{name} for manifest item {index} must be numeric or null.") from exc
+        location = f"manifest item {index}" if event_index is None else f"manifest item {index} event {event_index}"
+        raise ValueError(f"{name} for {location} must be numeric or null.") from exc
     if value < 0.0:
-        raise ValueError(f"{name} for manifest item {index} must be non-negative.")
+        location = f"manifest item {index}" if event_index is None else f"manifest item {index} event {event_index}"
+        raise ValueError(f"{name} for {location} must be non-negative.")
     return value
 
 
-def _normalize_label_batch(
-    labels: Optional[Sequence[Optional[str]]],
-    *,
-    name: str,
-    expected_length: int,
-    label_normalizer: LabelNormalizer,
-) -> Optional[List[Optional[str]]]:
-    if labels is None:
-        return None
-    if len(labels) != expected_length:
-        raise ValueError(f"{name} size mismatch: {len(labels)} vs {expected_length}")
-
-    normalized: List[Optional[str]] = []
-    for index, label in enumerate(labels):
-        if label is None:
-            normalized.append(None)
-            continue
-        if not isinstance(label, str):
-            raise ValueError(f"{name}[{index}] must be a string or None.")
-        normalized.append(_apply_label_normalizer(label, label_normalizer))
-    return normalized
-
-
-def _normalize_float_batch(
-    values: Optional[Sequence[Optional[Union[int, float]]]],
-    *,
-    name: str,
-    expected_length: int,
-) -> Optional[List[Optional[float]]]:
-    if values is None:
-        return None
-    if len(values) != expected_length:
-        raise ValueError(f"{name} size mismatch: {len(values)} vs {expected_length}")
-
-    normalized: List[Optional[float]] = []
-    for index, value in enumerate(values):
-        if value is None:
-            normalized.append(None)
-            continue
-        if isinstance(value, bool):
-            raise ValueError(f"{name}[{index}] must be numeric or None.")
-        try:
-            float_value = float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{name}[{index}] must be numeric or None.") from exc
-        if float_value < 0.0:
-            raise ValueError(f"{name}[{index}] must be non-negative.")
-        normalized.append(float_value)
-    return normalized
-
-
 def _normalize_candidate_labels(
-    candidate_labels: Optional[Sequence[str]],
+    candidate_labels: Sequence[str],
     *,
     label_normalizer: LabelNormalizer,
 ) -> List[str]:
-    if candidate_labels is None:
-        return []
-
     normalized: List[str] = []
     seen = set()
     for label in candidate_labels:
@@ -288,31 +198,6 @@ def _normalize_candidate_labels(
         normalized.append(mapped)
         seen.add(mapped)
     return normalized
-
-
-def _resolve_candidate_labels(
-    *,
-    candidate_labels: Optional[Sequence[str]],
-    source_labels: Optional[Sequence[Optional[str]]],
-    target_labels: Optional[Sequence[Optional[str]]],
-    label_normalizer: LabelNormalizer,
-) -> List[str]:
-    resolved = _normalize_candidate_labels(candidate_labels, label_normalizer=label_normalizer)
-    if resolved:
-        return resolved
-
-    seen = set()
-    derived: List[str] = []
-    for batch in (source_labels, target_labels):
-        if batch is None:
-            continue
-        for label in batch:
-            mapped = _apply_label_normalizer(label, label_normalizer)
-            if mapped is None or mapped in seen:
-                continue
-            derived.append(mapped)
-            seen.add(mapped)
-    return derived
 
 
 def _load_data_list(data: Union[List[str], str], name: str) -> List[str]:
@@ -346,177 +231,358 @@ def _safe_mean(values: Sequence[float]) -> float:
     return round(float(sum(values) / len(values)), 4) if values else 0.0
 
 
-def _compute_single_label_metrics(
-    reference_labels: Sequence[Optional[str]],
-    predicted_labels: Sequence[Optional[str]],
+def _normalize_event(
+    raw_event: Dict[str, Any],
     *,
-    class_labels: Sequence[str],
-) -> Dict[str, Any]:
-    evaluated_indices = [index for index, label in enumerate(reference_labels) if label is not None]
-    evaluated_reference = [reference_labels[index] for index in evaluated_indices]
-    evaluated_prediction = [predicted_labels[index] for index in evaluated_indices]
+    sample_index: int,
+    event_index: int,
+    label_normalizer: LabelNormalizer,
+) -> AcousticEvent:
+    raw_label = raw_event.get("label")
+    label = _apply_label_normalizer(None if raw_label is None else str(raw_label), label_normalizer)
+    if label is None:
+        raise ValueError(f"Manifest item {sample_index} event {event_index} is missing a valid label.")
 
-    total = len(evaluated_reference)
-    correct = sum(
-        1
-        for reference_label, predicted_label in zip(evaluated_reference, evaluated_prediction)
-        if reference_label == predicted_label
-    )
-    abstained = sum(1 for predicted_label in evaluated_prediction if predicted_label is None)
+    onset_ms = _coerce_optional_float(raw_event.get("onset_ms"), name="onset_ms", index=sample_index, event_index=event_index)
+    offset_ms = _coerce_optional_float(raw_event.get("offset_ms"), name="offset_ms", index=sample_index, event_index=event_index)
+    score = _coerce_optional_float(raw_event.get("score"), name="score", index=sample_index, event_index=event_index)
+    if onset_ms is not None and offset_ms is not None and offset_ms < onset_ms:
+        raise ValueError(f"offset_ms for manifest item {sample_index} event {event_index} must be >= onset_ms.")
 
-    unique_class_labels = list(dict.fromkeys([label for label in class_labels if label]))
-    if not unique_class_labels:
-        unique_class_labels = sorted(
+    return AcousticEvent(label=label, onset_ms=onset_ms, offset_ms=offset_ms, score=score)
+
+
+def _normalize_event_batch(
+    events_batch: Sequence[Sequence[Union[AcousticEvent, Dict[str, Any]]]],
+    *,
+    name: str,
+    expected_length: int,
+    label_normalizer: LabelNormalizer,
+) -> List[List[AcousticEvent]]:
+    if len(events_batch) != expected_length:
+        raise ValueError(f"{name} size mismatch: {len(events_batch)} vs {expected_length}")
+
+    normalized_batch: List[List[AcousticEvent]] = []
+    for sample_index, raw_events in enumerate(events_batch):
+        sample_events: List[AcousticEvent] = []
+        for event_index, raw_event in enumerate(raw_events):
+            if isinstance(raw_event, AcousticEvent):
+                mapped_label = _apply_label_normalizer(raw_event.label, label_normalizer)
+                if mapped_label is None:
+                    raise ValueError(f"{name}[{sample_index}][{event_index}] has an invalid label.")
+                sample_events.append(
+                    AcousticEvent(
+                        label=mapped_label,
+                        onset_ms=raw_event.onset_ms,
+                        offset_ms=raw_event.offset_ms,
+                        score=raw_event.score,
+                    )
+                )
+                continue
+            if not isinstance(raw_event, dict):
+                raise ValueError(f"{name}[{sample_index}][{event_index}] must be a dict or AcousticEvent.")
+            sample_events.append(
+                _normalize_event(
+                    raw_event,
+                    sample_index=sample_index,
+                    event_index=event_index,
+                    label_normalizer=label_normalizer,
+                )
+            )
+        normalized_batch.append(sample_events)
+    return normalized_batch
+
+
+def _relative_onset(event: AcousticEvent, duration_ms: float) -> Optional[float]:
+    if event.onset_ms is None or duration_ms <= 0.0:
+        return None
+    return float(event.onset_ms / duration_ms)
+
+
+def _count_events_by_label(events: Sequence[AcousticEvent]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for event in events:
+        counts[event.label] = counts.get(event.label, 0) + 1
+    return counts
+
+
+def _compute_count_metrics(
+    reference_batch: Sequence[Sequence[AcousticEvent]],
+    predicted_batch: Sequence[Sequence[AcousticEvent]],
+) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    tp = 0
+    fp = 0
+    fn = 0
+    per_label_tp: Dict[str, int] = {}
+    per_label_fp: Dict[str, int] = {}
+    per_label_fn: Dict[str, int] = {}
+    sample_records: List[Dict[str, Any]] = []
+
+    for sample_index, (reference_events, predicted_events) in enumerate(zip(reference_batch, predicted_batch)):
+        reference_counts = _count_events_by_label(reference_events)
+        predicted_counts = _count_events_by_label(predicted_events)
+        labels = sorted(set(reference_counts) | set(predicted_counts))
+        sample_tp = 0
+        sample_fp = 0
+        sample_fn = 0
+
+        for label in labels:
+            label_tp = min(reference_counts.get(label, 0), predicted_counts.get(label, 0))
+            label_fp = max(predicted_counts.get(label, 0) - reference_counts.get(label, 0), 0)
+            label_fn = max(reference_counts.get(label, 0) - predicted_counts.get(label, 0), 0)
+
+            tp += label_tp
+            fp += label_fp
+            fn += label_fn
+            sample_tp += label_tp
+            sample_fp += label_fp
+            sample_fn += label_fn
+
+            per_label_tp[label] = per_label_tp.get(label, 0) + label_tp
+            per_label_fp[label] = per_label_fp.get(label, 0) + label_fp
+            per_label_fn[label] = per_label_fn.get(label, 0) + label_fn
+
+        sample_records.append(
             {
-                label
-                for label in evaluated_reference + evaluated_prediction
-                if label is not None
+                "sample_index": int(sample_index),
+                "reference_counts": reference_counts,
+                "predicted_counts": predicted_counts,
+                "tp": int(sample_tp),
+                "fp": int(sample_fp),
+                "fn": int(sample_fn),
             }
         )
 
+    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+    f1 = float((2 * tp) / (2 * tp + fp + fn)) if (2 * tp + fp + fn) > 0 else 0.0
+
     per_label: Dict[str, Dict[str, float]] = {}
-    macro_f1_values: List[float] = []
-    macro_recall_values: List[float] = []
-    confusion: Dict[str, Dict[str, int]] = {}
-
-    for reference_label, predicted_label in zip(evaluated_reference, evaluated_prediction):
-        predicted_key = predicted_label if predicted_label is not None else "__none__"
-        confusion.setdefault(str(reference_label), {})
-        confusion[str(reference_label)][predicted_key] = confusion[str(reference_label)].get(predicted_key, 0) + 1
-
-    for label in unique_class_labels:
-        tp = sum(
-            1
-            for reference_label, predicted_label in zip(evaluated_reference, evaluated_prediction)
-            if reference_label == label and predicted_label == label
-        )
-        fp = sum(
-            1
-            for reference_label, predicted_label in zip(evaluated_reference, evaluated_prediction)
-            if reference_label != label and predicted_label == label
-        )
-        fn = sum(
-            1
-            for reference_label, predicted_label in zip(evaluated_reference, evaluated_prediction)
-            if reference_label == label and predicted_label != label
-        )
-        support = sum(1 for reference_label in evaluated_reference if reference_label == label)
-
-        precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
-        recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
-        f1 = float((2 * tp) / (2 * tp + fp + fn)) if (2 * tp + fp + fn) > 0 else 0.0
-
+    for label in sorted(set(per_label_tp) | set(per_label_fp) | set(per_label_fn)):
+        label_tp = per_label_tp.get(label, 0)
+        label_fp = per_label_fp.get(label, 0)
+        label_fn = per_label_fn.get(label, 0)
+        label_precision = float(label_tp / (label_tp + label_fp)) if (label_tp + label_fp) > 0 else 0.0
+        label_recall = float(label_tp / (label_tp + label_fn)) if (label_tp + label_fn) > 0 else 0.0
+        label_f1 = float((2 * label_tp) / (2 * label_tp + label_fp + label_fn)) if (2 * label_tp + label_fp + label_fn) > 0 else 0.0
         per_label[label] = {
-            "support": int(support),
+            "tp": int(label_tp),
+            "fp": int(label_fp),
+            "fn": int(label_fn),
+            "precision": round(label_precision, 4),
+            "recall": round(label_recall, 4),
+            "f1": round(label_f1, 4),
+        }
+
+    return (
+        {
+            "Acoustic_Event_Count_F1": round(f1, 4),
+        },
+        {
             "tp": int(tp),
             "fp": int(fp),
             "fn": int(fn),
             "precision": round(precision, 4),
             "recall": round(recall, 4),
             "f1": round(f1, 4),
-        }
-        macro_f1_values.append(f1)
-        macro_recall_values.append(recall)
-
-    return {
-        "num_evaluated": int(total),
-        "num_skipped": int(len(reference_labels) - total),
-        "num_correct": int(correct),
-        "num_abstained": int(abstained),
-        "preservation_rate": round(float(correct / total), 4) if total > 0 else 0.0,
-        "macro_f1": _safe_mean(macro_f1_values),
-        "macro_recall": _safe_mean(macro_recall_values),
-        "per_label": per_label,
-        "confusion_matrix": confusion,
-    }
+            "per_label": per_label,
+            "samples": sample_records,
+        },
+    )
 
 
-def _compute_alignment_metrics(
-    reference_labels: Sequence[Optional[str]],
-    predicted_labels: Sequence[Optional[str]],
-    source_onsets_ms: Sequence[Optional[float]],
-    target_onsets_ms: Sequence[Optional[float]],
-    source_durations_ms: Sequence[float],
-    target_durations_ms: Sequence[float],
+def _select_better_match(candidate: Tuple[int, float], current: Optional[Tuple[int, float]]) -> bool:
+    if current is None:
+        return True
+    if candidate[0] != current[0]:
+        return candidate[0] > current[0]
+    return candidate[1] < current[1]
+
+
+def _match_same_label_events(
+    reference_events: Sequence[AcousticEvent],
+    predicted_events: Sequence[AcousticEvent],
+    *,
+    reference_duration_ms: float,
+    predicted_duration_ms: float,
+    relative_onset_tolerance: float,
+) -> List[Tuple[int, int, float, float]]:
+    reference_records = [
+        (index, event, _relative_onset(event, reference_duration_ms))
+        for index, event in enumerate(reference_events)
+        if _relative_onset(event, reference_duration_ms) is not None
+    ]
+    predicted_records = [
+        (index, event, _relative_onset(event, predicted_duration_ms))
+        for index, event in enumerate(predicted_events)
+        if _relative_onset(event, predicted_duration_ms) is not None
+    ]
+
+    if not reference_records or not predicted_records:
+        return []
+
+    reference_records.sort(key=lambda item: item[2])
+    predicted_records.sort(key=lambda item: item[2])
+    num_references = len(reference_records)
+    num_predictions = len(predicted_records)
+    dp: List[List[Optional[Tuple[int, float]]]] = [[None] * (num_predictions + 1) for _ in range(num_references + 1)]
+    decision: List[List[Optional[str]]] = [[None] * (num_predictions + 1) for _ in range(num_references + 1)]
+
+    for i in range(num_references, -1, -1):
+        dp[i][num_predictions] = (0, 0.0)
+    for j in range(num_predictions, -1, -1):
+        dp[num_references][j] = (0, 0.0)
+
+    for i in range(num_references - 1, -1, -1):
+        for j in range(num_predictions - 1, -1, -1):
+            best = dp[i + 1][j]
+            best_decision = "skip_reference"
+
+            skip_prediction = dp[i][j + 1]
+            if _select_better_match(skip_prediction, best):
+                best = skip_prediction
+                best_decision = "skip_prediction"
+
+            reference_relative = float(reference_records[i][2])
+            predicted_relative = float(predicted_records[j][2])
+            relative_error = abs(reference_relative - predicted_relative)
+            if relative_error <= relative_onset_tolerance:
+                next_match = dp[i + 1][j + 1]
+                candidate = (next_match[0] + 1, next_match[1] + relative_error)
+                if _select_better_match(candidate, best):
+                    best = candidate
+                    best_decision = "match"
+
+            dp[i][j] = best
+            decision[i][j] = best_decision
+
+    matches: List[Tuple[int, int, float, float]] = []
+    i = 0
+    j = 0
+    while i < num_references and j < num_predictions:
+        current = decision[i][j]
+        if current == "match":
+            reference_index, reference_event, reference_relative = reference_records[i]
+            predicted_index, predicted_event, predicted_relative = predicted_records[j]
+            matches.append(
+                (
+                    reference_index,
+                    predicted_index,
+                    abs(float(reference_relative) - float(predicted_relative)),
+                    abs(float((reference_event.onset_ms or 0.0) - (predicted_event.onset_ms or 0.0))),
+                )
+            )
+            i += 1
+            j += 1
+        elif current == "skip_prediction":
+            j += 1
+        else:
+            i += 1
+    return matches
+
+
+def _compute_localization_metrics(
+    reference_batch: Sequence[Sequence[AcousticEvent]],
+    predicted_batch: Sequence[Sequence[AcousticEvent]],
+    reference_durations_ms: Sequence[float],
+    predicted_durations_ms: Sequence[float],
     *,
     relative_onset_tolerance: float,
     sample_ids: Optional[Sequence[str]] = None,
-) -> Dict[str, Any]:
-    evaluated_indices = [
-        index
-        for index, label in enumerate(reference_labels)
-        if label is not None and source_onsets_ms[index] is not None and source_durations_ms[index] > 0.0
-    ]
-
-    aligned_success = 0
-    missing_target_onset = 0
-    conditional_errors: List[float] = []
+) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    matched_total = 0
+    reference_total = sum(len(events) for events in reference_batch)
+    predicted_total = sum(len(events) for events in predicted_batch)
+    relative_errors: List[float] = []
+    absolute_errors_ms: List[float] = []
     sample_records: List[Dict[str, Any]] = []
 
-    for index in evaluated_indices:
-        reference_label = reference_labels[index]
-        predicted_label = predicted_labels[index]
-        source_onset_ms = source_onsets_ms[index]
-        target_onset_ms = target_onsets_ms[index]
-        source_duration_ms = float(source_durations_ms[index])
-        target_duration_ms = float(target_durations_ms[index])
+    for sample_index, (reference_events, predicted_events, reference_duration_ms, predicted_duration_ms) in enumerate(
+        zip(reference_batch, predicted_batch, reference_durations_ms, predicted_durations_ms)
+    ):
+        labels = sorted({event.label for event in reference_events} | {event.label for event in predicted_events})
+        matched_reference_indices = set()
+        matched_predicted_indices = set()
+        matched_pairs: List[Dict[str, Any]] = []
 
-        assert reference_label is not None
-        assert source_onset_ms is not None
+        for label in labels:
+            reference_label_events = [
+                (index, event)
+                for index, event in enumerate(reference_events)
+                if event.label == label
+            ]
+            predicted_label_events = [
+                (index, event)
+                for index, event in enumerate(predicted_events)
+                if event.label == label
+            ]
+            matches = _match_same_label_events(
+                [event for _, event in reference_label_events],
+                [event for _, event in predicted_label_events],
+                reference_duration_ms=reference_duration_ms,
+                predicted_duration_ms=predicted_duration_ms,
+                relative_onset_tolerance=relative_onset_tolerance,
+            )
+            for reference_local_index, predicted_local_index, relative_error, absolute_error_ms in matches:
+                reference_index, reference_event = reference_label_events[reference_local_index]
+                predicted_index, predicted_event = predicted_label_events[predicted_local_index]
+                matched_reference_indices.add(reference_index)
+                matched_predicted_indices.add(predicted_index)
+                matched_total += 1
+                relative_errors.append(relative_error)
+                absolute_errors_ms.append(absolute_error_ms)
+                matched_pairs.append(
+                    {
+                        "label": label,
+                        "reference_event": reference_event.to_dict(),
+                        "predicted_event": predicted_event.to_dict(),
+                        "relative_onset_error": round(relative_error, 4),
+                        "absolute_onset_error_ms": round(absolute_error_ms, 4),
+                    }
+                )
 
-        source_relative_onset = float(source_onset_ms / source_duration_ms) if source_duration_ms > 0.0 else None
-        target_relative_onset = (
-            float(target_onset_ms / target_duration_ms)
-            if target_onset_ms is not None and target_duration_ms > 0.0
-            else None
-        )
-        label_correct = predicted_label is not None and predicted_label == reference_label
-
-        relative_onset_error: Optional[float] = None
-        aligned = False
-        if label_correct and target_relative_onset is not None and source_relative_onset is not None:
-            relative_onset_error = abs(source_relative_onset - target_relative_onset)
-            conditional_errors.append(relative_onset_error)
-            aligned = relative_onset_error <= relative_onset_tolerance
-        elif label_correct and target_onset_ms is None:
-            missing_target_onset += 1
-
-        if aligned:
-            aligned_success += 1
-
+        unmatched_reference = [event.to_dict() for index, event in enumerate(reference_events) if index not in matched_reference_indices]
+        unmatched_predicted = [event.to_dict() for index, event in enumerate(predicted_events) if index not in matched_predicted_indices]
         sample_records.append(
             {
-                "sample_index": int(index),
-                "sample_id": sample_ids[index] if sample_ids is not None else str(index),
-                "reference_label": reference_label,
-                "predicted_label": predicted_label,
-                "source_onset_ms": float(source_onset_ms),
-                "target_onset_ms": None if target_onset_ms is None else float(target_onset_ms),
-                "source_duration_ms": round(source_duration_ms, 4),
-                "target_duration_ms": round(target_duration_ms, 4),
-                "source_relative_onset": None if source_relative_onset is None else round(source_relative_onset, 4),
-                "target_relative_onset": None if target_relative_onset is None else round(target_relative_onset, 4),
-                "relative_onset_error": None if relative_onset_error is None else round(relative_onset_error, 4),
-                "label_correct": bool(label_correct),
-                "aligned": bool(aligned),
+                "sample_index": int(sample_index),
+                "sample_id": sample_ids[sample_index] if sample_ids is not None else str(sample_index),
+                "reference_duration_ms": round(float(reference_duration_ms), 4),
+                "predicted_duration_ms": round(float(predicted_duration_ms), 4),
+                "matched_pairs": matched_pairs,
+                "unmatched_reference_events": unmatched_reference,
+                "unmatched_predicted_events": unmatched_predicted,
             }
         )
 
-    total = len(evaluated_indices)
-    return {
-        "num_evaluated": int(total),
-        "num_skipped": int(len(reference_labels) - total),
-        "num_aligned": int(aligned_success),
-        "num_missing_target_onset": int(missing_target_onset),
-        "num_conditionally_evaluated": int(len(conditional_errors)),
-        "aligned_preservation_rate": round(float(aligned_success / total), 4) if total > 0 else 0.0,
-        "conditional_relative_onset_error": _safe_mean(conditional_errors),
-        "relative_onset_tolerance": round(float(relative_onset_tolerance), 4),
-        "samples": sample_records,
-    }
+    fp = predicted_total - matched_total
+    fn = reference_total - matched_total
+    precision = float(matched_total / predicted_total) if predicted_total > 0 else 0.0
+    recall = float(matched_total / reference_total) if reference_total > 0 else 0.0
+    f1 = float((2 * matched_total) / (2 * matched_total + fp + fn)) if (2 * matched_total + fp + fn) > 0 else 0.0
+
+    return (
+        {
+            "Acoustic_Event_Localization_F1": round(f1, 4),
+            "Acoustic_Event_Onset_Error": _safe_mean(relative_errors),
+        },
+        {
+            "tp": int(matched_total),
+            "fp": int(fp),
+            "fn": int(fn),
+            "precision": round(precision, 4),
+            "recall": round(recall, 4),
+            "f1": round(f1, 4),
+            "relative_onset_tolerance": round(float(relative_onset_tolerance), 4),
+            "mean_relative_onset_error": _safe_mean(relative_errors),
+            "mean_absolute_onset_error_ms": _safe_mean(absolute_errors_ms),
+            "num_matched_events": int(matched_total),
+            "samples": sample_records,
+        },
+    )
 
 
-class ClapAudioEventPredictor(BaseAudioEventPredictor):
+class ClapAudioEventPredictor:
     PROMPT_TEMPLATES = (
         "{label}",
         "the sound of {label}",
@@ -528,11 +594,9 @@ class ClapAudioEventPredictor(BaseAudioEventPredictor):
         self,
         *,
         model_path: str = DEFAULT_CLAP_MODEL_SOURCE,
-        config: Optional[EventPredictionConfig] = None,
         device: Optional[str] = None,
     ) -> None:
         self.model_path = model_path
-        self.config = config or EventPredictionConfig()
         self.device = _to_device(device)
         self._processor = None
         self._model = None
@@ -545,7 +609,7 @@ class ClapAudioEventPredictor(BaseAudioEventPredictor):
         try:
             from transformers import ClapModel, ClapProcessor
         except ImportError as exc:
-            raise RuntimeError("CLAP-based event prediction requires `transformers`.") from exc
+            raise RuntimeError("CLAP-based event localization requires `transformers`.") from exc
 
         model_source, source_kind = resolve_pretrained_source(
             self.model_path,
@@ -555,19 +619,34 @@ class ClapAudioEventPredictor(BaseAudioEventPredictor):
         self._processor = ClapProcessor.from_pretrained(model_source)
         self._model = ClapModel.from_pretrained(model_source).to(self.device).eval()
 
-    @staticmethod
-    def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
-        norm = float(np.linalg.norm(embedding))
-        if norm <= 0.0:
-            return embedding
-        return embedding / norm
-
     def _build_prompts(self, candidate_labels: Sequence[str]) -> List[Tuple[str, str]]:
-        prompt_records: List[Tuple[str, str]] = []
+        prompts: List[Tuple[str, str]] = []
         for label in candidate_labels:
             for template in self.PROMPT_TEMPLATES:
-                prompt_records.append((label, template.format(label=label)))
-        return prompt_records
+                prompts.append((label, template.format(label=label)))
+        return prompts
+
+    def _normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
+        norm = float(np.linalg.norm(embedding))
+        return embedding / norm if norm > 0.0 else embedding
+
+    def _extract_text_embeddings(self, candidate_labels: Sequence[str]) -> Tuple[List[Tuple[str, str]], List[np.ndarray]]:
+        self._load_model()
+        assert self._processor is not None
+        assert self._model is not None
+
+        prompt_records = self._build_prompts(candidate_labels)
+        uncached_prompts = [prompt for _, prompt in prompt_records if prompt not in self._text_embedding_cache]
+        if uncached_prompts:
+            inputs = self._processor(text=uncached_prompts, return_tensors="pt", padding=True)
+            inputs = {key: value.to(self.device) for key, value in inputs.items()}
+            with torch.no_grad():
+                text_features = self._model.get_text_features(**inputs)
+            for prompt, embedding in zip(uncached_prompts, text_features.detach().cpu().numpy()):
+                self._text_embedding_cache[prompt] = self._normalize_embedding(embedding)
+
+        text_embeddings = [self._text_embedding_cache[prompt] for _, prompt in prompt_records]
+        return prompt_records, text_embeddings
 
     def _extract_audio_embeddings_from_waveforms(
         self,
@@ -584,75 +663,9 @@ class ClapAudioEventPredictor(BaseAudioEventPredictor):
             inputs = self._processor(audio=waveform, sampling_rate=sampling_rate, return_tensors="pt")
             inputs = {key: value.to(self.device) for key, value in inputs.items()}
             with torch.no_grad():
-                features = self._model.get_audio_features(**inputs)
-            embeddings.append(features[0].detach().cpu().numpy())
+                audio_features = self._model.get_audio_features(**inputs)
+            embeddings.append(self._normalize_embedding(audio_features[0].detach().cpu().numpy()))
         return embeddings
-
-    def _extract_audio_embeddings(self, audio_paths: Sequence[str]) -> List[np.ndarray]:
-        embeddings: List[np.ndarray] = []
-        for audio_path in tqdm(audio_paths, desc="Extracting CLAP event embeddings", unit="file"):
-            waveform, sr = _load_audio_mono(str(audio_path), target_sr=48000)
-            embeddings.extend(self._extract_audio_embeddings_from_waveforms([waveform], sampling_rate=sr))
-        return embeddings
-
-    def _extract_text_embeddings(self, texts: Sequence[str]) -> List[np.ndarray]:
-        self._load_model()
-        assert self._processor is not None
-        assert self._model is not None
-
-        embeddings: List[np.ndarray] = []
-        for text in texts:
-            cached = self._text_embedding_cache.get(text)
-            if cached is not None:
-                embeddings.append(cached)
-                continue
-            inputs = self._processor(text=[str(text)], return_tensors="pt", padding=True)
-            inputs = {key: value.to(self.device) for key, value in inputs.items()}
-            with torch.no_grad():
-                features = self._model.get_text_features(**inputs)
-            embedding = features[0].detach().cpu().numpy()
-            self._text_embedding_cache[text] = embedding
-            embeddings.append(embedding)
-        return embeddings
-
-    def _score_audio_embeddings(
-        self,
-        audio_embeddings: Sequence[np.ndarray],
-        candidate_labels: Sequence[str],
-    ) -> List[Dict[str, float]]:
-        normalized_candidate_labels = [
-            _normalize_text_label(label)
-            for label in candidate_labels
-            if _normalize_text_label(label)
-        ]
-        unique_candidate_labels = list(dict.fromkeys(normalized_candidate_labels))
-        if not unique_candidate_labels:
-            return [{} for _ in audio_embeddings]
-
-        prompt_records = self._build_prompts(unique_candidate_labels)
-        normalized_audio_embeddings = [self._normalize_embedding(item) for item in audio_embeddings]
-        normalized_text_embeddings = [
-            self._normalize_embedding(item)
-            for item in self._extract_text_embeddings([prompt for _, prompt in prompt_records])
-        ]
-
-        scores_per_audio: List[Dict[str, float]] = []
-        for audio_embedding in normalized_audio_embeddings:
-            label_scores: Dict[str, float] = {}
-            for (label, _prompt), text_embedding in zip(prompt_records, normalized_text_embeddings):
-                score = float(np.dot(audio_embedding, text_embedding))
-                if label not in label_scores or score > label_scores[label]:
-                    label_scores[label] = score
-            scores_per_audio.append(label_scores)
-        return scores_per_audio
-
-    def score_audio_paths(
-        self,
-        audio_paths: Sequence[str],
-        candidate_labels: Sequence[str],
-    ) -> List[Dict[str, float]]:
-        audio_embeddings = self._extract_audio_embeddings(audio_paths)
-        return self._score_audio_embeddings(audio_embeddings, candidate_labels)
 
     def score_waveforms(
         self,
@@ -661,38 +674,19 @@ class ClapAudioEventPredictor(BaseAudioEventPredictor):
         sampling_rate: int,
         candidate_labels: Sequence[str],
     ) -> List[Dict[str, float]]:
+        prompt_records, text_embeddings = self._extract_text_embeddings(candidate_labels)
         audio_embeddings = self._extract_audio_embeddings_from_waveforms(waveforms, sampling_rate=sampling_rate)
-        return self._score_audio_embeddings(audio_embeddings, candidate_labels)
+        normalized_text_embeddings = [self._normalize_embedding(embedding) for embedding in text_embeddings]
 
-    def predict(
-        self,
-        audio_paths: Sequence[str],
-        candidate_labels: Sequence[str],
-    ) -> List[EventPrediction]:
-        label_scores_per_audio = self.score_audio_paths(audio_paths, candidate_labels)
-
-        predictions: List[EventPrediction] = []
-        threshold = float(self.config.score_threshold)
-        fallback_top1 = bool(self.config.fallback_top1)
-
-        for label_scores in label_scores_per_audio:
-            if not label_scores:
-                predictions.append(EventPrediction(label=None, score=None, scores={}))
-                continue
-
-            top_label = max(label_scores.items(), key=lambda item: item[1])[0]
-            top_score = float(label_scores[top_label])
-            predicted_label = top_label if top_score >= threshold or fallback_top1 else None
-
-            predictions.append(
-                EventPrediction(
-                    label=predicted_label,
-                    score=top_score,
-                    scores={label: round(score, 4) for label, score in sorted(label_scores.items())},
-                )
-            )
-
-        return predictions
+        scores_per_audio: List[Dict[str, float]] = []
+        for audio_embedding in audio_embeddings:
+            label_scores: Dict[str, float] = {}
+            for (label, _prompt), text_embedding in zip(prompt_records, normalized_text_embeddings):
+                score = float(np.dot(audio_embedding, text_embedding))
+                if label not in label_scores or score > label_scores[label]:
+                    label_scores[label] = score
+            scores_per_audio.append(label_scores)
+        return scores_per_audio
 
 
 class ClapSlidingWindowEventLocalizer(BaseAudioEventLocalizer):
@@ -704,11 +698,7 @@ class ClapSlidingWindowEventLocalizer(BaseAudioEventLocalizer):
         localization_config: Optional[EventLocalizationConfig] = None,
         device: Optional[str] = None,
     ) -> None:
-        self.predictor = ClapAudioEventPredictor(
-            model_path=model_path,
-            config=prediction_config,
-            device=device,
-        )
+        self.predictor = ClapAudioEventPredictor(model_path=model_path, device=device)
         self.prediction_config = prediction_config or EventPredictionConfig()
         self.localization_config = localization_config or EventLocalizationConfig()
 
@@ -728,84 +718,76 @@ class ClapSlidingWindowEventLocalizer(BaseAudioEventLocalizer):
         segments = [waveform[start : start + window_samples] for start in starts]
         return segments, starts
 
+    def _merge_label_windows(
+        self,
+        *,
+        label: str,
+        windows: Sequence[Tuple[float, float, float]],
+    ) -> List[AcousticEvent]:
+        if not windows:
+            return []
+
+        merge_gap_ms = float(self.localization_config.merge_gap_ms)
+        min_duration_ms = float(self.localization_config.min_duration_ms)
+        merged_events: List[AcousticEvent] = []
+
+        current_onset, current_offset, current_score = windows[0]
+        for onset_ms, offset_ms, score in windows[1:]:
+            if onset_ms <= current_offset + merge_gap_ms:
+                current_offset = max(current_offset, offset_ms)
+                current_score = max(current_score, score)
+                continue
+            if current_offset - current_onset >= min_duration_ms:
+                merged_events.append(
+                    AcousticEvent(label=label, onset_ms=current_onset, offset_ms=current_offset, score=current_score)
+                )
+            current_onset, current_offset, current_score = onset_ms, offset_ms, score
+
+        if current_offset - current_onset >= min_duration_ms:
+            merged_events.append(
+                AcousticEvent(label=label, onset_ms=current_onset, offset_ms=current_offset, score=current_score)
+            )
+        return merged_events
+
     def localize(
         self,
         audio_paths: Sequence[str],
-        labels: Sequence[Optional[str]],
         candidate_labels: Sequence[str],
-    ) -> List[EventLocalization]:
-        if len(audio_paths) != len(labels):
-            raise ValueError(f"audio_paths size mismatch: {len(audio_paths)} vs labels {len(labels)}")
+    ) -> List[List[AcousticEvent]]:
+        if not candidate_labels:
+            raise ValueError("candidate_labels must not be empty when target events are not provided.")
 
-        normalized_candidate_labels = {
-            _normalize_text_label(label)
-            for label in candidate_labels
-            if _normalize_text_label(label)
-        }
-        threshold = (
-            float(self.localization_config.score_threshold)
-            if self.localization_config.score_threshold is not None
-            else float(self.prediction_config.score_threshold)
-        )
-        fallback_top1 = (
-            bool(self.localization_config.fallback_top1)
-            if self.localization_config.fallback_top1 is not None
-            else bool(self.prediction_config.fallback_top1)
-        )
-
-        localizations: List[EventLocalization] = []
-        for audio_path, label in tqdm(
-            list(zip(audio_paths, labels)),
-            desc="Localizing acoustic events",
-            unit="file",
-        ):
-            normalized_label = _normalize_text_label(label) if isinstance(label, str) and label else None
-            if normalized_label is None or (
-                normalized_candidate_labels and normalized_label not in normalized_candidate_labels
-            ):
-                localizations.append(EventLocalization(label=normalized_label))
-                continue
-
+        threshold = float(self.prediction_config.score_threshold)
+        all_localizations: List[List[AcousticEvent]] = []
+        for audio_path in tqdm(audio_paths, desc="Localizing acoustic events", unit="file"):
             waveform, sampling_rate = _load_audio_mono(str(audio_path), target_sr=48000)
             if waveform.size == 0:
-                localizations.append(EventLocalization(label=normalized_label))
+                all_localizations.append([])
                 continue
 
             segments, starts = self._build_windows(waveform, sampling_rate)
             label_scores_per_window = self.predictor.score_waveforms(
                 segments,
                 sampling_rate=sampling_rate,
-                candidate_labels=[normalized_label],
-            )
-            best_start = 0
-            best_score = None
-            best_index = -1
-            for index, label_scores in enumerate(label_scores_per_window):
-                score = label_scores.get(normalized_label)
-                if score is None:
-                    continue
-                if best_score is None or score > best_score:
-                    best_score = float(score)
-                    best_start = starts[index]
-                    best_index = index
-
-            if best_score is None or (best_score < threshold and not fallback_top1):
-                localizations.append(EventLocalization(label=normalized_label, score=best_score))
-                continue
-
-            window_samples = len(segments[best_index]) if best_index >= 0 else 0
-            onset_ms = float(best_start / sampling_rate * 1000.0)
-            offset_ms = float(min(best_start + window_samples, len(waveform)) / sampling_rate * 1000.0)
-            localizations.append(
-                EventLocalization(
-                    label=normalized_label,
-                    onset_ms=onset_ms,
-                    offset_ms=offset_ms,
-                    score=best_score,
-                )
+                candidate_labels=candidate_labels,
             )
 
-        return localizations
+            active_windows: Dict[str, List[Tuple[float, float, float]]] = {label: [] for label in candidate_labels}
+            for start, segment, label_scores in zip(starts, segments, label_scores_per_window):
+                onset_ms = float(start / sampling_rate * 1000.0)
+                offset_ms = float(min(start + len(segment), len(waveform)) / sampling_rate * 1000.0)
+                for label in candidate_labels:
+                    score = label_scores.get(label)
+                    if score is None or score < threshold:
+                        continue
+                    active_windows[label].append((onset_ms, offset_ms, float(score)))
+
+            events: List[AcousticEvent] = []
+            for label in candidate_labels:
+                events.extend(self._merge_label_windows(label=label, windows=active_windows[label]))
+            events.sort(key=lambda event: ((event.onset_ms or 0.0), event.label))
+            all_localizations.append(events)
+        return all_localizations
 
 
 class ParalinguisticEvaluator:
@@ -813,89 +795,21 @@ class ParalinguisticEvaluator:
 
     def __init__(
         self,
-        use_continuous_fidelity: bool = True,
-        use_event_preservation: bool = True,
-        use_event_alignment: bool = True,
         clap_model_path: Optional[str] = None,
-        event_predictor: Optional[BaseAudioEventPredictor] = None,
         event_localizer: Optional[BaseAudioEventLocalizer] = None,
         event_prediction_config: Optional[Dict[str, Any]] = None,
         event_localization_config: Optional[Dict[str, Any]] = None,
-        event_alignment_config: Optional[Dict[str, Any]] = None,
+        event_matching_config: Optional[Dict[str, Any]] = None,
         device: Optional[str] = None,
         **_: Any,
     ) -> None:
         self.device = _to_device(device)
-        self.use_continuous_fidelity = bool(use_continuous_fidelity)
-        self.use_event_preservation = bool(use_event_preservation)
-        self.use_event_alignment = bool(use_event_alignment)
         self.clap_model_path = clap_model_path or self.DEFAULT_CLAP_MODEL
         self.event_prediction_config = EventPredictionConfig(**(event_prediction_config or {}))
         self.event_localization_config = EventLocalizationConfig(**(event_localization_config or {}))
-        self.event_alignment_config = EventAlignmentConfig(**(event_alignment_config or {}))
-        self.event_predictor = event_predictor
+        self.event_matching_config = EventMatchingConfig(**(event_matching_config or {}))
         self.event_localizer = event_localizer
-
-        self._clap_processor = None
-        self._clap_model = None
-        self._default_predictor: Optional[ClapAudioEventPredictor] = None
         self._default_localizer: Optional[ClapSlidingWindowEventLocalizer] = None
-
-    def _load_clap(self) -> None:
-        if self._clap_model is not None and self._clap_processor is not None:
-            return
-
-        try:
-            from transformers import ClapModel, ClapProcessor
-        except ImportError as exc:
-            raise RuntimeError("Paralinguistic_Fidelity_Cosine requires `transformers` to load CLAP.") from exc
-
-        model_source, source_kind = resolve_pretrained_source(
-            self.clap_model_path,
-            fallback_source=self.DEFAULT_CLAP_MODEL,
-        )
-        print(f"Loading CLAP ({source_kind}) from {model_source}...")
-        self._clap_processor = ClapProcessor.from_pretrained(model_source)
-        self._clap_model = ClapModel.from_pretrained(model_source).to(self.device).eval()
-
-    def _extract_clap_embeddings(self, audio_paths: Sequence[str]) -> List[np.ndarray]:
-        self._load_clap()
-        assert self._clap_processor is not None
-        assert self._clap_model is not None
-
-        embeddings: List[np.ndarray] = []
-        for audio_path in tqdm(audio_paths, desc="Extracting CLAP embeddings", unit="file"):
-            waveform, sr = _load_audio_mono(str(audio_path), target_sr=48000)
-            inputs = self._clap_processor(audio=waveform, sampling_rate=sr, return_tensors="pt")
-            inputs = {key: value.to(self.device) for key, value in inputs.items()}
-            with torch.no_grad():
-                features = self._clap_model.get_audio_features(**inputs)
-            embeddings.append(features[0].detach().cpu().numpy())
-        return embeddings
-
-    @staticmethod
-    def _average_cosine(source_embeddings: Sequence[np.ndarray], target_embeddings: Sequence[np.ndarray]) -> float:
-        total = 0.0
-        count = 0
-        for source_embedding, target_embedding in zip(source_embeddings, target_embeddings):
-            source_norm = float(np.linalg.norm(source_embedding))
-            target_norm = float(np.linalg.norm(target_embedding))
-            if source_norm <= 0.0 or target_norm <= 0.0:
-                continue
-            total += float(np.dot(source_embedding, target_embedding) / (source_norm * target_norm))
-            count += 1
-        return round(total / count, 4) if count > 0 else 0.0
-
-    def _get_event_predictor(self) -> BaseAudioEventPredictor:
-        if self.event_predictor is not None:
-            return self.event_predictor
-        if self._default_predictor is None:
-            self._default_predictor = ClapAudioEventPredictor(
-                model_path=self.clap_model_path,
-                config=self.event_prediction_config,
-                device=self.device,
-            )
-        return self._default_predictor
 
     def _get_event_localizer(self) -> BaseAudioEventLocalizer:
         if self.event_localizer is not None:
@@ -909,78 +823,13 @@ class ParalinguisticEvaluator:
             )
         return self._default_localizer
 
-    def _predict_labels(
-        self,
-        *,
-        audio_paths: Sequence[str],
-        candidate_labels: Sequence[str],
-        label_normalizer: LabelNormalizer,
-    ) -> List[EventPrediction]:
-        predictor = self._get_event_predictor()
-        if not hasattr(predictor, "predict"):
-            raise TypeError("event_predictor must expose a `predict(audio_paths, candidate_labels)` method.")
-
-        predictions = predictor.predict(audio_paths, candidate_labels)
-        if len(predictions) != len(audio_paths):
-            raise ValueError(
-                "event_predictor returned a different number of predictions than audio inputs: "
-                f"{len(predictions)} vs {len(audio_paths)}"
-            )
-
-        normalized_predictions: List[EventPrediction] = []
-        for prediction in predictions:
-            normalized_predictions.append(
-                EventPrediction(
-                    label=_apply_label_normalizer(prediction.label, label_normalizer),
-                    score=prediction.score,
-                    scores={
-                        _apply_label_normalizer(label, label_normalizer) or label: float(score)
-                        for label, score in prediction.scores.items()
-                    },
-                )
-            )
-        return normalized_predictions
-
-    def _localize_events(
-        self,
-        *,
-        audio_paths: Sequence[str],
-        labels: Sequence[Optional[str]],
-        candidate_labels: Sequence[str],
-        label_normalizer: LabelNormalizer,
-    ) -> List[EventLocalization]:
-        localizer = self._get_event_localizer()
-        if not hasattr(localizer, "localize"):
-            raise TypeError("event_localizer must expose a `localize(audio_paths, labels, candidate_labels)` method.")
-
-        localizations = localizer.localize(audio_paths, labels, candidate_labels)
-        if len(localizations) != len(audio_paths):
-            raise ValueError(
-                "event_localizer returned a different number of localizations than audio inputs: "
-                f"{len(localizations)} vs {len(audio_paths)}"
-            )
-
-        normalized_localizations: List[EventLocalization] = []
-        for localization in localizations:
-            normalized_localizations.append(
-                EventLocalization(
-                    label=_apply_label_normalizer(localization.label, label_normalizer),
-                    onset_ms=localization.onset_ms,
-                    offset_ms=localization.offset_ms,
-                    score=localization.score,
-                )
-            )
-        return normalized_localizations
-
     def evaluate_all(
         self,
         source_audio: Union[List[str], str],
         target_audio: Union[List[str], str],
         *,
-        source_labels: Optional[Sequence[Optional[str]]] = None,
-        target_labels: Optional[Sequence[Optional[str]]] = None,
-        source_onsets_ms: Optional[Sequence[Optional[Union[int, float]]]] = None,
-        target_onsets_ms: Optional[Sequence[Optional[Union[int, float]]]] = None,
+        source_events: Sequence[Sequence[Union[AcousticEvent, Dict[str, Any]]]],
+        target_events: Optional[Sequence[Sequence[Union[AcousticEvent, Dict[str, Any]]]]] = None,
         candidate_labels: Optional[Sequence[str]] = None,
         label_normalizer: LabelNormalizer = None,
         sample_ids: Optional[Sequence[str]] = None,
@@ -998,200 +847,62 @@ class ParalinguisticEvaluator:
             raise ValueError("No samples found for paralinguistic evaluation.")
 
         num_samples = len(source_audio_paths)
-        normalized_source_labels = _normalize_label_batch(
-            source_labels,
-            name="source_labels",
+        normalized_source_events = _normalize_event_batch(
+            source_events,
+            name="source_events",
             expected_length=num_samples,
-            label_normalizer=label_normalizer,
-        )
-        normalized_target_labels = _normalize_label_batch(
-            target_labels,
-            name="target_labels",
-            expected_length=num_samples,
-            label_normalizer=label_normalizer,
-        )
-        normalized_source_onsets_ms = _normalize_float_batch(
-            source_onsets_ms,
-            name="source_onsets_ms",
-            expected_length=num_samples,
-        )
-        normalized_target_onsets_ms = _normalize_float_batch(
-            target_onsets_ms,
-            name="target_onsets_ms",
-            expected_length=num_samples,
-        )
-        resolved_candidate_labels = _resolve_candidate_labels(
-            candidate_labels=candidate_labels,
-            source_labels=normalized_source_labels,
-            target_labels=normalized_target_labels,
             label_normalizer=label_normalizer,
         )
 
-        results: Dict[str, float] = {}
+        if target_events is None:
+            if candidate_labels is None:
+                raise ValueError("candidate_labels is required when target_events is not provided.")
+            normalized_candidate_labels = _normalize_candidate_labels(candidate_labels, label_normalizer=label_normalizer)
+            if not normalized_candidate_labels:
+                raise ValueError("candidate_labels resolved to an empty label set.")
+            normalized_target_events = self._get_event_localizer().localize(target_audio_paths, normalized_candidate_labels)
+            target_event_origin = "localized_target_events"
+        else:
+            normalized_target_events = _normalize_event_batch(
+                target_events,
+                name="target_events",
+                expected_length=num_samples,
+                label_normalizer=label_normalizer,
+            )
+            normalized_candidate_labels = _normalize_candidate_labels(
+                candidate_labels or [event.label for batch in normalized_source_events for event in batch],
+                label_normalizer=label_normalizer,
+            )
+            target_event_origin = "provided_target_events"
+
+        reference_durations_ms = [_get_audio_duration_ms(path) for path in source_audio_paths]
+        predicted_durations_ms = [_get_audio_duration_ms(path) for path in target_audio_paths]
+
+        count_results, count_diagnostics = _compute_count_metrics(normalized_source_events, normalized_target_events)
+        localization_results, localization_diagnostics = _compute_localization_metrics(
+            normalized_source_events,
+            normalized_target_events,
+            reference_durations_ms,
+            predicted_durations_ms,
+            relative_onset_tolerance=self.event_matching_config.relative_onset_tolerance,
+            sample_ids=sample_ids,
+        )
+
+        results = {**count_results, **localization_results}
         diagnostics: Dict[str, Any] = {
-            "num_samples": num_samples,
+            "num_samples": int(num_samples),
             "device": self.device,
             "clap_model_path": self.clap_model_path,
+            "candidate_labels": list(normalized_candidate_labels),
+            "target_event_origin": target_event_origin,
+            "prediction_config": self.event_prediction_config.to_dict(),
+            "localization_config": self.event_localization_config.to_dict(),
+            "matching_config": self.event_matching_config.to_dict(),
+            "count_metrics": count_diagnostics,
+            "localization_metrics": localization_diagnostics,
+            "source_events": [[event.to_dict() for event in events] for events in normalized_source_events],
+            "target_events": [[event.to_dict() for event in events] for events in normalized_target_events],
         }
-
-        if self.use_continuous_fidelity:
-            source_embeddings = self._extract_clap_embeddings(source_audio_paths)
-            target_embeddings = self._extract_clap_embeddings(target_audio_paths)
-            cosine = self._average_cosine(source_embeddings, target_embeddings)
-            results["Paralinguistic_Fidelity_Cosine"] = cosine
-            diagnostics["continuous_fidelity"] = {
-                "metric": "Paralinguistic_Fidelity_Cosine",
-                "num_embeddings": len(source_embeddings),
-                "score": cosine,
-            }
-
-        source_prediction_records: Optional[List[EventPrediction]] = None
-        target_prediction_records: Optional[List[EventPrediction]] = None
-        source_label_origin = "provided_source_labels"
-        target_label_origin = "provided_target_labels"
-
-        if self.use_event_preservation or self.use_event_alignment:
-            if (normalized_source_labels is None or normalized_target_labels is None) and not resolved_candidate_labels:
-                raise ValueError(
-                    "Event preservation or alignment requires candidate_labels when either source_labels or "
-                    "target_labels are not provided."
-                )
-
-            if normalized_source_labels is None:
-                source_prediction_records = self._predict_labels(
-                    audio_paths=source_audio_paths,
-                    candidate_labels=resolved_candidate_labels,
-                    label_normalizer=label_normalizer,
-                )
-                normalized_source_labels = [prediction.label for prediction in source_prediction_records]
-                source_label_origin = "predicted_source_labels"
-
-            if normalized_target_labels is None:
-                target_prediction_records = self._predict_labels(
-                    audio_paths=target_audio_paths,
-                    candidate_labels=resolved_candidate_labels,
-                    label_normalizer=label_normalizer,
-                )
-                normalized_target_labels = [prediction.label for prediction in target_prediction_records]
-                target_label_origin = "predicted_target_labels"
-
-        if self.use_event_preservation:
-            assert normalized_source_labels is not None
-            assert normalized_target_labels is not None
-
-            metric_payload = _compute_single_label_metrics(
-                normalized_source_labels,
-                normalized_target_labels,
-                class_labels=resolved_candidate_labels,
-            )
-
-            use_predicted_reference = source_labels is None
-            if use_predicted_reference:
-                rate_name = "Predicted_Event_Consistency_Rate"
-                macro_f1_name = "Predicted_Event_Consistency_Macro_F1"
-                macro_recall_name = "Predicted_Event_Consistency_Macro_Recall"
-            else:
-                rate_name = "Acoustic_Event_Preservation_Rate"
-                macro_f1_name = "Acoustic_Event_Preservation_Macro_F1"
-                macro_recall_name = "Acoustic_Event_Preservation_Macro_Recall"
-
-            results[rate_name] = metric_payload["preservation_rate"]
-            results[macro_f1_name] = metric_payload["macro_f1"]
-            results[macro_recall_name] = metric_payload["macro_recall"]
-
-            diagnostics["event_preservation"] = {
-                "candidate_labels": list(resolved_candidate_labels),
-                "source_label_origin": source_label_origin,
-                "target_label_origin": target_label_origin,
-                "config": self.event_prediction_config.to_dict(),
-                "num_evaluated": metric_payload["num_evaluated"],
-                "num_skipped": metric_payload["num_skipped"],
-                "num_abstained": metric_payload["num_abstained"],
-                "per_label": metric_payload["per_label"],
-                "confusion_matrix": metric_payload["confusion_matrix"],
-                "source_predictions": [prediction.to_dict() for prediction in source_prediction_records]
-                if source_prediction_records is not None
-                else None,
-                "target_predictions": [prediction.to_dict() for prediction in target_prediction_records]
-                if target_prediction_records is not None
-                else None,
-                "samples": [
-                    {
-                        "sample_index": index,
-                        "sample_id": sample_ids[index] if sample_ids is not None else str(index),
-                        "reference_label": normalized_source_labels[index],
-                        "predicted_label": normalized_target_labels[index],
-                        "correct": normalized_source_labels[index] is not None
-                        and normalized_source_labels[index] == normalized_target_labels[index],
-                    }
-                    for index in range(num_samples)
-                ],
-            }
-
-        if self.use_event_alignment and normalized_source_onsets_ms is not None:
-            assert normalized_source_labels is not None
-            assert normalized_target_labels is not None
-
-            target_localization_records: Optional[List[EventLocalization]] = None
-            target_onset_origin = "provided_target_onsets_ms"
-
-            if normalized_target_onsets_ms is None:
-                target_localization_records = self._localize_events(
-                    audio_paths=target_audio_paths,
-                    labels=normalized_target_labels,
-                    candidate_labels=resolved_candidate_labels,
-                    label_normalizer=label_normalizer,
-                )
-                normalized_target_onsets_ms = [item.onset_ms for item in target_localization_records]
-                target_onset_origin = "localized_target_onsets_ms"
-
-            assert normalized_target_onsets_ms is not None
-
-            source_durations_ms = [_get_audio_duration_ms(path) for path in source_audio_paths]
-            target_durations_ms = [_get_audio_duration_ms(path) for path in target_audio_paths]
-
-            alignment_payload = _compute_alignment_metrics(
-                normalized_source_labels,
-                normalized_target_labels,
-                normalized_source_onsets_ms,
-                normalized_target_onsets_ms,
-                source_durations_ms,
-                target_durations_ms,
-                relative_onset_tolerance=self.event_alignment_config.relative_onset_tolerance,
-                sample_ids=sample_ids,
-            )
-
-            if source_labels is None:
-                alignment_rate_name = "Predicted_Event_Aligned_Consistency_Rate"
-                onset_error_name = "Predicted_Conditional_Relative_Onset_Error"
-            else:
-                alignment_rate_name = "Event_Aligned_Preservation_Rate"
-                onset_error_name = "Conditional_Relative_Onset_Error"
-
-            results[alignment_rate_name] = alignment_payload["aligned_preservation_rate"]
-            results[onset_error_name] = alignment_payload["conditional_relative_onset_error"]
-
-            diagnostics["event_alignment"] = {
-                "candidate_labels": list(resolved_candidate_labels),
-                "source_label_origin": source_label_origin,
-                "target_label_origin": target_label_origin,
-                "target_onset_origin": target_onset_origin,
-                "prediction_config": self.event_prediction_config.to_dict(),
-                "localization_config": self.event_localization_config.to_dict(),
-                "alignment_config": self.event_alignment_config.to_dict(),
-                "source_onsets_ms": normalized_source_onsets_ms,
-                "target_onsets_ms": normalized_target_onsets_ms,
-                "target_localizations": [item.to_dict() for item in target_localization_records]
-                if target_localization_records is not None
-                else None,
-                "num_evaluated": alignment_payload["num_evaluated"],
-                "num_skipped": alignment_payload["num_skipped"],
-                "num_aligned": alignment_payload["num_aligned"],
-                "num_missing_target_onset": alignment_payload["num_missing_target_onset"],
-                "num_conditionally_evaluated": alignment_payload["num_conditionally_evaluated"],
-                "relative_onset_tolerance": alignment_payload["relative_onset_tolerance"],
-                "samples": alignment_payload["samples"],
-            }
 
         if verbose:
             print("\n[ParalinguisticEvaluator] Summary")
@@ -1204,7 +915,7 @@ class ParalinguisticEvaluator:
         return results
 
 
-def load_paralinguistic_manifest(path: str) -> List[ParalinguisticSample]:
+def load_paralinguistic_manifest(path: str, *, label_normalizer: LabelNormalizer = None) -> List[ParalinguisticSample]:
     manifest_path = Path(path)
     if not manifest_path.exists():
         raise FileNotFoundError(f"Paralinguistic manifest not found: {path}")
@@ -1222,31 +933,51 @@ def load_paralinguistic_manifest(path: str) -> List[ParalinguisticSample]:
         if not source_audio:
             raise ValueError(f"Manifest item {index} is missing source_audio.")
 
-        raw_label = item.get("source_label", item.get("label", item.get("labels")))
-        source_label = _coerce_manifest_source_label(raw_label, index)
+        raw_events = item.get("source_events")
+        if raw_events is None:
+            raise ValueError(
+                f"Manifest item {index} is missing source_events. "
+                "The new paralinguistic evaluator requires explicit source_events."
+            )
+        if not isinstance(raw_events, list):
+            raise ValueError(f"source_events for manifest item {index} must be a list.")
+
+        events = tuple(
+            _normalize_event(
+                raw_event,
+                sample_index=index,
+                event_index=event_index,
+                label_normalizer=label_normalizer,
+            )
+            for event_index, raw_event in enumerate(raw_events)
+            if isinstance(raw_event, dict)
+        )
+        if len(events) != len(raw_events):
+            raise ValueError(f"source_events for manifest item {index} must contain only dict entries.")
+
         metadata = item.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
-
-        raw_onset = item.get("source_onset_ms", item.get("onset_ms", item.get("start_ms", metadata.get("source_onset_ms"))))
-        raw_offset = item.get("source_offset_ms", item.get("offset_ms", item.get("end_ms", metadata.get("source_offset_ms"))))
 
         samples.append(
             ParalinguisticSample(
                 sample_id=str(item.get("id", index)),
                 source_audio=ensure_existing_audio(str(source_audio)),
                 source_text=str(item.get("source_text", "")).strip(),
-                source_label=source_label,
-                source_onset_ms=_coerce_optional_float(raw_onset, name="source_onset_ms", index=index),
-                source_offset_ms=_coerce_optional_float(raw_offset, name="source_offset_ms", index=index),
+                source_events=events,
                 metadata=metadata,
             )
         )
     return samples
 
 
-def load_paralinguistic_samples(path: str, max_samples: Optional[int] = None) -> List[ParalinguisticSample]:
-    samples = load_paralinguistic_manifest(path)
+def load_paralinguistic_samples(
+    path: str,
+    max_samples: Optional[int] = None,
+    *,
+    label_normalizer: LabelNormalizer = None,
+) -> List[ParalinguisticSample]:
+    samples = load_paralinguistic_manifest(path, label_normalizer=label_normalizer)
     if max_samples is not None:
         return samples[:max_samples]
     return samples
@@ -1259,9 +990,7 @@ def build_paralinguistic_inputs(samples: List[ParalinguisticSample]) -> Dict[str
         "sample_ids": [sample.sample_id for sample in samples],
         "source_audio": [sample.source_audio for sample in samples],
         "source_text": [sample.source_text for sample in samples],
-        "source_labels": [sample.source_label for sample in samples],
-        "source_onsets_ms": [sample.source_onset_ms for sample in samples],
-        "source_offsets_ms": [sample.source_offset_ms for sample in samples],
+        "source_events": [[event.to_dict() for event in sample.source_events] for sample in samples],
         "metadata": [sample.metadata for sample in samples],
     }
 
@@ -1277,15 +1006,14 @@ def evaluate_paralinguistic_dataset(
     device: Optional[str] = None,
     return_diagnostics: bool = False,
     sample_transform: Optional[Callable[[List[ParalinguisticSample]], List[ParalinguisticSample]]] = None,
-    target_labels: Optional[Sequence[Optional[str]]] = None,
-    target_onsets_ms: Optional[Sequence[Optional[Union[int, float]]]] = None,
+    target_events: Optional[Sequence[Sequence[Union[AcousticEvent, Dict[str, Any]]]]] = None,
     candidate_labels: Optional[Sequence[str]] = None,
     label_normalizer: LabelNormalizer = None,
 ) -> Union[Tuple[Dict[str, float], Dict[str, Any]], Dict[str, float]]:
     if samples is None:
         if not manifest_path:
             raise ValueError("manifest_path is required when samples are not provided.")
-        samples = load_paralinguistic_manifest(manifest_path)
+        samples = load_paralinguistic_manifest(manifest_path, label_normalizer=label_normalizer)
 
     if max_samples is not None:
         samples = samples[:max_samples]
@@ -1303,18 +1031,13 @@ def evaluate_paralinguistic_dataset(
 
     if evaluator is None:
         final_kwargs = dict(evaluator_kwargs or {})
-        final_kwargs.setdefault("use_continuous_fidelity", True)
-        final_kwargs.setdefault("use_event_preservation", True)
-        final_kwargs.setdefault("use_event_alignment", True)
         evaluator = ParalinguisticEvaluator(device=device, **final_kwargs)
 
     result = evaluator.evaluate_all(
         source_audio=inputs["source_audio"],
         target_audio=target_audio,
-        source_labels=inputs["source_labels"],
-        target_labels=target_labels,
-        source_onsets_ms=inputs["source_onsets_ms"],
-        target_onsets_ms=target_onsets_ms,
+        source_events=inputs["source_events"],
+        target_events=target_events,
         candidate_labels=candidate_labels,
         label_normalizer=label_normalizer,
         sample_ids=inputs["sample_ids"],
