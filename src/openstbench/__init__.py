@@ -9,7 +9,7 @@ actually accessed.
 from importlib import import_module
 from typing import Dict, Tuple
 
-__version__ = "0.3.5"
+__version__ = "1.0.0"
 
 __all__ = [
     "TranslationEvaluator",

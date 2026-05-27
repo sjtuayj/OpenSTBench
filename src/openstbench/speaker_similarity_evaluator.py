@@ -6,41 +6,38 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from ._model_loading import resolve_pretrained_source
 
-DEFAULT_WAVLM_MODEL_SOURCE = "microsoft/wavlm-base-plus-sv"
 DEFAULT_WAVLM_SAMPLE_RATE = 16000
-VALID_MODEL_TYPES = {"wavlm", "resemblyzer", "both"}
 
 
 class SpeakerSimilarityEvaluator:
-    """Compute speaker-similarity scores between reference and synthesized audio."""
+    """Compute speaker-similarity scores with a supplied WavLM-like model and Resemblyzer."""
 
     def __init__(
         self,
-        model_type: str = "wavlm",
+        wavlm_model,
         device: str = None,
-        wavlm_model_path: str = DEFAULT_WAVLM_MODEL_SOURCE,
-        resemblyzer_weights_path: str = "pretrained.pt",
+        resemblyzer_weights_path: str = None,
     ):
+        if wavlm_model is None:
+            raise ValueError("`wavlm_model` is required.")
         self.device = self._resolve_device(device)
-        self.model_type = str(model_type).strip().lower()
-        if self.model_type not in VALID_MODEL_TYPES:
-            valid = ", ".join(sorted(VALID_MODEL_TYPES))
-            raise ValueError(f"Unsupported model_type `{model_type}`. Expected one of: {valid}.")
+        self.resemblyzer_weights_path = self._require_existing_file(
+            resemblyzer_weights_path,
+            "resemblyzer_weights_path",
+        )
 
-        print(f"Initializing SpeakerSimilarityEvaluator with model(s): {self.model_type} on {self.device}")
+        print(
+            "Initializing SpeakerSimilarityEvaluator "
+            f"(supplied WavLM-like model + Resemblyzer) on {self.device}"
+        )
 
-        self.wavlm_feature_extractor = None
-        self.wavlm_model = None
+        self.wavlm_model = wavlm_model
         self.resemblyzer_encoder = None
         self.resemblyzer_preprocess_wav = None
 
-        if self.model_type in {"wavlm", "both"}:
-            self._load_wavlm(wavlm_model_path)
-
-        if self.model_type in {"resemblyzer", "both"}:
-            self._load_resemblyzer(resemblyzer_weights_path)
+        self._prepare_wavlm_model()
+        self._load_resemblyzer()
 
     @staticmethod
     def _resolve_device(device: str = None) -> str:
@@ -53,34 +50,21 @@ class SpeakerSimilarityEvaluator:
         return "cpu"
 
     @staticmethod
+    def _require_existing_file(path: str, argument_name: str) -> str:
+        if not path:
+            raise ValueError(f"`{argument_name}` is required.")
+        normalized = os.path.expanduser(str(path))
+        if not os.path.isfile(normalized):
+            raise FileNotFoundError(f"`{argument_name}` does not exist: {normalized}")
+        return normalized
+
+    @staticmethod
     def _load_audio_16k_mono(audio_path: str) -> np.ndarray:
         audio, _ = librosa.load(audio_path, sr=DEFAULT_WAVLM_SAMPLE_RATE, mono=True)
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
         if audio.size == 0:
             raise ValueError(f"Loaded empty audio from `{audio_path}`.")
         return audio
-
-    @staticmethod
-    def _move_batch_to_device(batch: Dict[str, torch.Tensor], device: str) -> Dict[str, torch.Tensor]:
-        return {
-            key: value.to(device) if hasattr(value, "to") else value
-            for key, value in batch.items()
-        }
-
-    @staticmethod
-    def _import_transformers_wavlm():
-        os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
-        os.environ.setdefault("USE_TF", "0")
-        os.environ.setdefault("USE_FLAX", "0")
-        os.environ.setdefault("USE_TORCH", "1")
-        try:
-            from transformers import Wav2Vec2FeatureExtractor, WavLMForXVector
-        except Exception as exc:
-            raise ImportError(
-                "Please ensure the WavLM dependencies are importable before using speaker similarity. "
-                f"Root cause: {exc}"
-            ) from exc
-        return Wav2Vec2FeatureExtractor, WavLMForXVector
 
     @staticmethod
     def _import_resemblyzer():
@@ -93,59 +77,40 @@ class SpeakerSimilarityEvaluator:
             ) from exc
         return VoiceEncoder, preprocess_wav
 
-    def _load_wavlm(self, wavlm_model_path: str) -> None:
-        Wav2Vec2FeatureExtractor, WavLMForXVector = self._import_transformers_wavlm()
-        model_source, source_kind = resolve_pretrained_source(
-            wavlm_model_path,
-            fallback_source=DEFAULT_WAVLM_MODEL_SOURCE,
-        )
-        print(f"Loading WavLM ({source_kind}) from {model_source}...")
+    def _prepare_wavlm_model(self) -> None:
         try:
-            self.wavlm_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_source)
-            self.wavlm_model = WavLMForXVector.from_pretrained(model_source).to(self.device).eval()
+            if hasattr(self.wavlm_model, "to"):
+                self.wavlm_model.to(self.device)
+            if hasattr(self.wavlm_model, "eval"):
+                self.wavlm_model.eval()
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to load WavLM speaker model from `{model_source}` ({source_kind}). Root cause: {exc}"
+                "Failed to prepare the supplied WavLM-like speaker model. "
+                f"Root cause: {exc}"
             ) from exc
 
-    def _load_resemblyzer(self, resemblyzer_weights_path: str) -> None:
+    def _load_resemblyzer(self) -> None:
         VoiceEncoder, preprocess_wav = self._import_resemblyzer()
         self.resemblyzer_preprocess_wav = preprocess_wav
-        print("Loading Resemblyzer VoiceEncoder...")
+        print(f"Loading Resemblyzer VoiceEncoder from {self.resemblyzer_weights_path}...")
         try:
-            if resemblyzer_weights_path and os.path.exists(resemblyzer_weights_path):
-                self.resemblyzer_encoder = VoiceEncoder(weights_fpath=resemblyzer_weights_path)
-            else:
-                self.resemblyzer_encoder = VoiceEncoder()
+            self.resemblyzer_encoder = VoiceEncoder(weights_fpath=self.resemblyzer_weights_path)
         except Exception as exc:
             raise RuntimeError(
                 "Failed to initialize Resemblyzer VoiceEncoder. "
-                f"weights_path=`{resemblyzer_weights_path}`. Root cause: {exc}"
+                f"weights_path=`{self.resemblyzer_weights_path}`. Root cause: {exc}"
             ) from exc
 
     @torch.no_grad()
-    def _evaluate_wavlm_pair(self, ref_wav_path: str, synth_wav_path: str) -> float:
+    def _evaluate_wavlm_large_pair(self, ref_wav_path: str, synth_wav_path: str) -> float:
         ref_audio = self._load_audio_16k_mono(ref_wav_path)
         synth_audio = self._load_audio_16k_mono(synth_wav_path)
+        ref_tensor = torch.tensor(ref_audio).unsqueeze(0).float().to(self.device)
+        synth_tensor = torch.tensor(synth_audio).unsqueeze(0).float().to(self.device)
 
-        ref_inputs = self.wavlm_feature_extractor(
-            ref_audio,
-            return_tensors="pt",
-            sampling_rate=DEFAULT_WAVLM_SAMPLE_RATE,
-        )
-        synth_inputs = self.wavlm_feature_extractor(
-            synth_audio,
-            return_tensors="pt",
-            sampling_rate=DEFAULT_WAVLM_SAMPLE_RATE,
-        )
-        ref_inputs = self._move_batch_to_device(ref_inputs, self.device)
-        synth_inputs = self._move_batch_to_device(synth_inputs, self.device)
-
-        ref_embeddings = self.wavlm_model(**ref_inputs).embeddings
-        synth_embeddings = self.wavlm_model(**synth_inputs).embeddings
-        ref_embeddings = torch.nn.functional.normalize(ref_embeddings, dim=-1)
-        synth_embeddings = torch.nn.functional.normalize(synth_embeddings, dim=-1)
-        similarity = torch.nn.functional.cosine_similarity(ref_embeddings, synth_embeddings, dim=-1)
+        ref_embedding = self.wavlm_model(ref_tensor).cpu()
+        synth_embedding = self.wavlm_model(synth_tensor).cpu()
+        similarity = torch.nn.functional.cosine_similarity(ref_embedding, synth_embedding, dim=-1)
         return float(similarity.item())
 
     def _evaluate_resemblyzer_pair(self, ref_wav_path: str, synth_wav_path: str) -> float:
@@ -157,15 +122,10 @@ class SpeakerSimilarityEvaluator:
 
     @torch.no_grad()
     def evaluate(self, ref_wav_path: str, synth_wav_path: str) -> Dict[str, float]:
-        results: Dict[str, float] = {}
-
-        if self.model_type in {"wavlm", "both"}:
-            results["wavlm_similarity"] = self._evaluate_wavlm_pair(ref_wav_path, synth_wav_path)
-
-        if self.model_type in {"resemblyzer", "both"}:
-            results["resemblyzer_similarity"] = self._evaluate_resemblyzer_pair(ref_wav_path, synth_wav_path)
-
-        return results
+        return {
+            "wavlm_large_similarity": self._evaluate_wavlm_large_pair(ref_wav_path, synth_wav_path),
+            "resemblyzer_similarity": self._evaluate_resemblyzer_pair(ref_wav_path, synth_wav_path),
+        }
 
     def evaluate_batch(self, ref_wav_paths: Sequence[str], synth_wav_paths: Sequence[str]) -> Dict[str, object]:
         if len(ref_wav_paths) != len(synth_wav_paths):
@@ -176,9 +136,9 @@ class SpeakerSimilarityEvaluator:
         if not ref_wav_paths:
             raise ValueError("Speaker-similarity evaluation received an empty audio list.")
 
-        batch_results: Dict[str, object] = {"details": []}
+        details: List[Dict[str, object]] = []
         wavlm_scores: List[float] = []
-        res_scores: List[float] = []
+        resemblyzer_scores: List[float] = []
 
         print("Evaluating speaker similarity...")
         for index, (ref_path, synth_path) in enumerate(
@@ -192,15 +152,12 @@ class SpeakerSimilarityEvaluator:
                     f"index={index}, ref=`{ref_path}`, synth=`{synth_path}`. Root cause: {exc}"
                 ) from exc
 
-            batch_results["details"].append({"ref": ref_path, "synth": synth_path, "score": result})
-            if "wavlm_similarity" in result:
-                wavlm_scores.append(result["wavlm_similarity"])
-            if "resemblyzer_similarity" in result:
-                res_scores.append(result["resemblyzer_similarity"])
+            details.append({"ref": ref_path, "synth": synth_path, "score": result})
+            wavlm_scores.append(float(result["wavlm_large_similarity"]))
+            resemblyzer_scores.append(float(result["resemblyzer_similarity"]))
 
-        if wavlm_scores:
-            batch_results["average_wavlm_similarity"] = float(np.mean(wavlm_scores))
-        if res_scores:
-            batch_results["average_resemblyzer_similarity"] = float(np.mean(res_scores))
-
-        return batch_results
+        return {
+            "details": details,
+            "average_wavlm_large_similarity": float(np.mean(wavlm_scores)),
+            "average_resemblyzer_similarity": float(np.mean(resemblyzer_scores)),
+        }
