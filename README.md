@@ -1,6 +1,6 @@
 # OpenSTBench
 
-English | [Chinese](./README_zh.md)
+English | [中文](./README_zh.md)
 
 [![PyPI version](https://badge.fury.io/py/OpenSTBench.svg)](https://pypi.org/project/OpenSTBench/)
 [![Python 3.9-3.10](https://img.shields.io/badge/python-3.9--3.10-blue.svg)](https://www.python.org/downloads/)
