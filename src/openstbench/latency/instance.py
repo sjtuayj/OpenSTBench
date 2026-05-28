@@ -1,3 +1,13 @@
+# This file contains code adapted from SimulEval:
+# https://github.com/facebookresearch/SimulEval
+#
+# SimulEval is licensed under the Creative Commons Attribution-ShareAlike
+# 4.0 International License (CC BY-SA 4.0):
+# https://creativecommons.org/licenses/by-sa/4.0/
+#
+# The adapted portions in this file are distributed under CC BY-SA 4.0.
+# Modifications were made for OpenSTBench.
+
 import time
 import math
 import soundfile
@@ -18,7 +28,7 @@ class Instance:
         self.delays = [] 
         self.prediction_list = [] 
         self.start_time = None
-        self.durations = [] # S2S 专用
+        self.durations = [] # Exclusive to S2S
         self.finish_prediction = False
         self.total_inference_time = 0.0 
         self.total_model_inference_time = None
@@ -67,7 +77,7 @@ class Instance:
         else:
             self.prediction_text = text
         self.prediction_text_source = source
-    def get_prediction_raw(self): return self.prediction_list # 返回原始 list 供质量评测
+    def get_prediction_raw(self): return self.prediction_list # Returns the raw list for quality evaluation
 
 class SpeechToTextInstance(Instance):
     def __init__(self, index, source_path, reference=None, output_dir="./output"):
@@ -95,7 +105,7 @@ class SpeechToTextInstance(Instance):
             return EmptySegment(finished=True)
 
     def add_inference_time(self, time_spent_in_seconds: float):
-        """累加纯模型计算时间"""
+        """Accumulates purely model inference time."""
         self.total_inference_time += time_spent_in_seconds
         
     def receive_prediction(self, seg: Segment):
@@ -159,7 +169,7 @@ class SpeechToSpeechInstance(SpeechToTextInstance):
         self.finish_prediction = seg.finished
 
     def get_prediction_content(self):
-        # 返回 wav 路径
+        # Returns the WAV file path
         wav_dir = self.output_dir / "wavs"
         wav_dir.mkdir(parents=True, exist_ok=True)
         wav_path = wav_dir / f"{self.index}_pred.wav"
@@ -171,7 +181,7 @@ class SpeechToSpeechInstance(SpeechToTextInstance):
         return self.prediction_audio_path
     
     def get_prediction_raw(self):
-        # S2S 的原始预测结果是音频路径
+        # For S2S, the raw prediction result is the audio file path
         return self.get_prediction_content()
 
     @property 

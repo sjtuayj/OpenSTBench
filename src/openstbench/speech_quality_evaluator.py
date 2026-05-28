@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Union
 from tqdm import tqdm
 
-# 复用现有的加载工具
+# Reuse existing loading utilities
 from ._model_loading import resolve_pretrained_source
 from .translation_evaluator import load_text_from_file_or_list, load_audio_from_folder
 
@@ -18,10 +18,10 @@ except ImportError:
 class SpeechQualityEvaluator:
     DEFAULT_WHISPER_MODEL = "medium"
     """
-    语音质量与一致性评测器
-    专门用于：
-    1. UTMOS (音频自然度/听感质量)
-    2. WER/CER 一致性计算 (使用模型自己生成的文本与其生成的音频进行比对)
+    Speech Quality and Consistency Evaluator.
+    Specifically designed for:
+    1. UTMOS (Audio naturalness / perceived quality).
+    2. WER/CER Consistency Calculation (compares the model's generated text with its generated audio).
     """
     def __init__(self, 
                  use_wer: bool = True,
@@ -71,10 +71,10 @@ class SpeechQualityEvaluator:
     def _load_whisper(self):
         if self.whisper_model is None and self.use_wer:
             if not whisper:
-                print("⚠️ Whisper 未安装，跳过加载")
+                print("⚠️ Whisper is not installed, skipping load.")
                 self.use_wer = False
                 return
-            print(f"⏳ 正在加载 Whisper ({self.whisper_model_name})...")
+            print(f"⏳ Loading Whisper ({self.whisper_model_name})...")
             model_source, source_kind = resolve_pretrained_source(
                 self.whisper_model_name,
                 fallback_source=self.DEFAULT_WHISPER_MODEL,
@@ -84,7 +84,7 @@ class SpeechQualityEvaluator:
 
     def _load_utmos(self):
         if self.utmos_model is None and self.use_utmos:
-            print("⏳ 正在加载 UTMOS 模型...")
+            print("⏳ Loading UTMOS model...")
             try:
                 source = "github"
                 repo_or_dir = "tarepan/SpeechMOS"
@@ -103,7 +103,7 @@ class SpeechQualityEvaluator:
                     
                 self.utmos_model.to(self.device).eval()
             except Exception as e:
-                print(f"⚠️ UTMOS 模型加载失败: {e}")
+                print(f"⚠️ UTMOS model failed to load: {e}")
                 self.use_utmos = False
 
     def _transcribe(self, audio_paths: List[str]) -> List[str]:
@@ -124,19 +124,13 @@ class SpeechQualityEvaluator:
             results.append(res["text"].strip())
         return results
 
-        results = []
-        for path in tqdm(audio_paths, desc="🎙️ Whisper 转写中"):
-            res = self.whisper_model.transcribe(path, fp16=torch.cuda.is_available() and "cuda" in self.device)
-            results.append(res["text"].strip())
-        return results
-
     def _compute_utmos(self, audio_paths: List[str]) -> float:
         self._load_utmos()
         if not self.utmos_model: return 0.0
         
         scores = []
         target_sr = 16000
-        for path in tqdm(audio_paths, desc="🎧 计算 UTMOS"):
+        for path in tqdm(audio_paths, desc="🎧 Computing UTMOS"):
             try:
                 wave, sr = torchaudio.load(path)
                 if sr != target_sr:
@@ -165,34 +159,34 @@ class SpeechQualityEvaluator:
                      target_text: Optional[Union[List[str], str]] = None,
                      target_lang: str = "en") -> Dict[str, float]:
         """
-        :param target_audio: 模型生成的音频路径列表或文件夹
-        :param target_text: 模型同步生成的文本，用作 WER 计算的参照
-        :param target_lang: 音频与文本的目标语言
+        :param target_audio: List of paths or directory to the model-generated audio.
+        :param target_text: Text generated synchronously by the model, used as reference for WER/CER calculation.
+        :param target_lang: Target language for both audio and text.
         """
         results = {}
-        print(f"\n--- 开始语音质量评测 (Target Lang: {target_lang}) ---")
+        print(f"\n--- Starting Speech Quality Evaluation (Target Lang: {target_lang}) ---")
         
-        # 加载目标音频
+        # Load target audio
         if isinstance(target_audio, str) and os.path.exists(target_audio) and os.path.isdir(target_audio):
             audio_paths = load_audio_from_folder(target_audio)
         else:
             audio_paths = target_audio if isinstance(target_audio, list) else [target_audio]
 
-        # 1. 计算 UTMOS
+        # 1. evaluate UTMOS
         if self.use_utmos:
-            print("   ➤ 计算 UTMOS (音频自然度)...")
+            print("   ➤ Computing UTMOS (Audio Naturalness)...")
             results["UTMOS"] = round(self._compute_utmos(audio_paths), 4)
 
-        # 2. 计算 Consistency WER/CER
+        # 2. evaluate Consistency WER/CER
         if self.use_wer:
             if not target_text:
-                print("   ⚠️ 未提供 target_text (模型同时生成的文本)，无法计算文本-语音一致性，跳过 WER/CER。")
+                print(" ⚠️ target_text (synchronously generated text) not provided. Text-speech consistency cannot be evaluated, skipping WER/CER.")
             else:
                 texts = load_text_from_file_or_list(target_text, "target_text")
                 if len(texts) != len(audio_paths):
-                    raise ValueError(f"生成的文本行数 ({len(texts)}) 与 生成的音频数量 ({len(audio_paths)}) 不一致！")
+                    raise ValueError(f"Number of generated text lines ({len(texts)}) does not match number of audio files ({len(audio_paths)})!")
                 
-                print("   ➤ 正在进行音频转写，准备计算一致性...")
+                print("   ➤ Transcribing audio, preparing consistency calculation...")
                 asr_texts = self._transcribe(audio_paths)
                 
                 clean_refs = [self._preprocess_for_wer(t, target_lang) for t in texts]
@@ -203,6 +197,6 @@ class SpeechQualityEvaluator:
                     metric_name = "CER_Consistency" if target_lang in ['zh', 'ja', 'ko'] else "WER_Consistency"
                     results[metric_name] = round(error_rate, 4)
                 else:
-                    print("   ⚠️ 提供的生成文本清洗后为空，无法计算分布错误率。")
+                    print("   ⚠️ The provided generated text is empty after cleaning, cannot compute distribution error rate.") 
 
         return results

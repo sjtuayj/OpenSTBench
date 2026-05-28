@@ -17,11 +17,11 @@ def _load_data_list(
     if isinstance(input_data, list):
         return input_data
     if not isinstance(input_data, str):
-        raise ValueError(f"{name} 必须是 文件路径(str) 或 列表(List[str])")
+        raise ValueError(f"{name} must be a file path (str) or a list (List[str]).")
 
     path = Path(input_data)
     if not path.exists():
-        raise FileNotFoundError(f"{name} 文件不存在: {input_data}")
+        raise FileNotFoundError(f"{name} file does not exist: {input_data}")
     
     suffix = path.suffix.lower()
 
@@ -43,7 +43,7 @@ def _load_data_list(
                 for key in candidate_keys:
                     if key in data[0]:
                         return [item[key] for item in data]
-                raise ValueError(f"JSON 列表项中未找到常见{target_type}字段: {candidate_keys}")
+                raise ValueError(f"JSON list items do not contain common {target_type} fields: {candidate_keys}")
 
         if isinstance(data, dict):
             plural_candidates = [k + "s" for k in candidate_keys]
@@ -51,8 +51,8 @@ def _load_data_list(
             for key in plural_candidates:
                 if key in data:
                     return data[key]
-            raise ValueError(f"JSON 字典中未找到常见{target_type}列表字段")
-        raise ValueError("不支持的 JSON 格式")
+            raise ValueError(f"JSON dictionary does not contain common {target_type} list fields")
+        raise ValueError("Unsupported JSON format")
     else:
         with open(path, "r", encoding="utf-8") as f:
             return [line.strip() for line in f if line.strip()]
@@ -61,25 +61,25 @@ def _load_data_list(
 def _load_audio_from_folder(folder_path: str, extensions: tuple = (".wav", ".mp3", ".flac")) -> List[str]:
     folder = Path(folder_path)
     if not folder.exists():
-        raise FileNotFoundError(f"文件夹不存在: {folder_path}")
+        raise FileNotFoundError(f"Folder does not exist: {folder_path}")
     audio_files = []
     for ext in extensions:
         audio_files.extend(folder.glob(f"*{ext}"))
     audio_files = sorted(audio_files, key=lambda x: x.stem)
     if not audio_files:
-        raise ValueError(f"文件夹中没有音频文件: {folder_path}")
+        raise ValueError(f"Folder contains no audio files: {folder_path}")
     return [str(f) for f in audio_files]
 
 
 class EmotionEvaluator:
     """
-    基于 Emotion2Vec+ 的情感评测器 
-    支持：
-    [1] 跨语种保真度评测：基于 768-d 高维嵌入特征的 Cosine Similarity 保真度。
-    [2] 离散情感分类评测：基于模型 Zero-Shot 分类能力的识别准确度评测。
+    Emotion Evaluator based on Emotion2Vec+
+    Supports:
+    [1] Cross-lingual Fidelity Evaluation: Cosine Similarity fidelity based on 768-d high-dimensional embeddings.
+    [2] Discrete Emotion Classification Evaluation: Recognition accuracy evaluation based on the model's Zero-Shot classification capability.
     """
     
-    # 唯一依赖的基座模型
+    # The only dependent base model
     DEFAULT_E2V_MODEL = "iic/emotion2vec_plus_large"
 
     def __init__(self, 
@@ -91,12 +91,12 @@ class EmotionEvaluator:
         self.e2v_model_path = e2v_model_path or self.DEFAULT_E2V_MODEL
         self.e2v_model = None
         
-        # 将用户的自定义标签映射统一全部小写，确保健壮性
+        # Convert user's custom label mapping to lowercase entirely to ensure robustness
         self.custom_label_map = {k.lower(): v.lower() for k, v in (custom_label_map or {}).items()}
 
     def _load_e2v_model(self):
         if self.e2v_model is not None: return
-        print(f"⏳ 正在加载 Emotion2Vec+ 大模型: {self.e2v_model_path}")
+        print(f"⏳ Loading Emotion2Vec+ large model: {self.e2v_model_path}")
         try:
             from funasr import AutoModel
             model_source, source_kind = resolve_pretrained_source(
@@ -105,21 +105,21 @@ class EmotionEvaluator:
             )
             print(f"Loading Emotion2Vec+ ({source_kind}) from {model_source}...")
             self.e2v_model = AutoModel(model=model_source, device=self.device, disable_update=True)
-            print("✅ Emotion2Vec+ 大模型加载成功！")
+            print("✅ Emotion2Vec+ large model loaded successfully!")
         except ImportError:
-            print("❌ Emotion2Vec+ 依赖缺失。请执行: pip install funasr modelscope")
+            print("❌ Emotion2Vec+ dependencies are missing. Please run: pip install funasr modelscope")
         except Exception as e:
-            print(f"❌ Emotion2Vec+ 分类模型加载失败: {e}")
+            print(f"❌ Failed to load Emotion2Vec+ classification model: {e}")
 
-    # =============== 特征提取部分 ===============
+    # =============== Feature Extraction Section ===============
 
     def _extract_e2v_embeddings(self, audio_paths: List[str]) -> List[np.ndarray]:
-        """提取 Emotion2Vec+ 的综合高维特征 Embedding 用于衡量总体保真度相似度"""
+        """Extracts Emotion2Vec+ comprehensive high-dimensional embeddings to measure overall fidelity similarity."""
         self._load_e2v_model()
         if not self.e2v_model: return [np.zeros(768)] * len(audio_paths)
 
         results = []
-        for path in tqdm(audio_paths, desc="🔍 音频 E2V 高维特征", unit="file"):
+        for path in tqdm(audio_paths, desc="🔍 Audio E2V High-dim Features", unit="file"):
             try:
                 res = self.e2v_model.generate(path, output_dir=None, granularity="utterance", extract_embedding=True)
                 if isinstance(res, list) and len(res) > 0 and 'feats' in res[0]:
@@ -132,35 +132,35 @@ class EmotionEvaluator:
         return results
 
     def _extract_cls_emotion(self, audio_paths: List[str]) -> List[str]:
-        """提取 Emotion2Vec+ 的离散情感分类预测结果"""
+        """Extracts discrete emotion classification prediction results from Emotion2Vec+."""
         self._load_e2v_model()
         if not self.e2v_model: return ["unknown"] * len(audio_paths)
 
         results = []
-        for path in tqdm(audio_paths, desc="🔍 音频 E2V 离散分类标签 예측", unit="file"):
+        for path in tqdm(audio_paths, desc="🔍 Audio E2V Discrete Classification Labels", unit="file"):
             try:
-                # 默认分类模式，返回具体的 label
+                # Default classification mode, returns the specific label
                 res = self.e2v_model.generate(path, output_dir=None, granularity="utterance", extract_embedding=False)
                 if isinstance(res, list) and len(res) > 0 and 'labels' in res[0] and 'scores' in res[0]:
                     labels = res[0]['labels']
                     scores = res[0]['scores']
                     
-                    # 1. 找到得分最高的标签索引
+                    # 1. Find the index of the label with the highest score
                     best_idx = np.argmax(scores)
                     best_label_str = labels[best_idx]
                     
-                    # 2. 解析出英文部分 (因为输出格式是 '生气/angry')
+                    # 2. Parse out the English part (since the output format might be 'angry')
                     if "/" in best_label_str:
                         label = best_label_str.split("/")[-1].lower()
                     else:
                         label = best_label_str.lower()
                         
-                    # 3. 清洗可能存在的特殊占位符
+                    # 3. Clean up potential special placeholders
                     label = label.replace("<|", "").replace("|>", "").strip()
                 else:
                     label = "unknown"
                 
-                # 应用自定义对齐
+                # Apply custom alignment
                 if label in self.custom_label_map:
                     label = self.custom_label_map[label]
                 results.append(label)
@@ -168,7 +168,7 @@ class EmotionEvaluator:
                 results.append("unknown")
         return results
 
-    # =============== 评测主入口 ===============
+    # =============== Main Evaluation Entry ===============
 
     def evaluate_all(self, 
                      source_audio: Optional[Union[List[str], str]] = None, 
@@ -176,9 +176,9 @@ class EmotionEvaluator:
                      reference_labels: Optional[Union[List[str], str]] = None,
                      verbose: bool = True) -> Dict[str, float]:
         """
-        动态融合引擎入口：
-        - 仅传 target_audio 与 reference_labels -> 计算 Accuracy 
-        - 仅传 source_audio 与 target_audio -> 计算 E2V 特征保真度
+        Dynamic fusion engine entry point:
+        - Passing only target_audio and reference_labels -> Calculates Accuracy
+        - Passing source_audio and target_audio -> Calculates E2V Feature Fidelity
         """
         
         if target_audio is None:
@@ -186,7 +186,7 @@ class EmotionEvaluator:
                 target_audio = source_audio
                 source_audio = None
             else:
-                raise ValueError("🚨 必须提供 target_audio 参数运行评测。")
+                raise ValueError("🚨 Must provide target_audio parameter to run evaluation.")
 
         if isinstance(target_audio, str) and os.path.isdir(target_audio):
             tgt_paths = _load_audio_from_folder(target_audio)
@@ -195,23 +195,23 @@ class EmotionEvaluator:
         
         num_samples = len(tgt_paths)
         if num_samples == 0:
-            raise ValueError("没有找到目标音频数据，评测停止。")
+            raise ValueError("No target audio data found, evaluation stopped.")
 
         run_fidelity = source_audio is not None
         run_classification = reference_labels is not None
         results = {}
 
-        # ==================== 分支 1：保真度相似度计算 ====================
+        # ==================== Branch 1: Fidelity Similarity Calculation ====================
         if run_fidelity:
-            if verbose: print(f"\n📝 启动【跨模态综合保真度运算】 ({num_samples} 个 Source-Target 音频距离比对)...")
-            
+            if verbose: print(f"\n📝 Starting 【Cross-modal Comprehensive Fidelity Calculation】 ({num_samples} Source-Target Audio Distance Comparisons)...")
+
             if isinstance(source_audio, str) and os.path.isdir(source_audio):
                 src_paths = _load_audio_from_folder(source_audio)
             else:
                 src_paths = _load_data_list(source_audio, "Source Audio Paths", "audio")
 
             if len(src_paths) != num_samples:
-                raise ValueError(f"数目不一致: Source ({len(src_paths)}) != Target ({num_samples})")
+                raise ValueError(f"Count mismatch: Source ({len(src_paths)}) != Target ({num_samples})")
 
             src_e2v_embs = self._extract_e2v_embeddings(src_paths)
             tgt_e2v_embs = self._extract_e2v_embeddings(tgt_paths)
@@ -234,13 +234,13 @@ class EmotionEvaluator:
             results["Emotion2Vec_Cosine_Similarity"] = round(final_cosine, 4)
 
 
-        # ==================== 分支 2：离散情感识别计算 ====================
+        # ==================== Branch 2: Discrete Emotion Recognition Calculation ====================
         if run_classification:
-            if verbose: print(f"\n📝 启动【Emotion2Vec+ 离散分类准确率运算】 ({num_samples} 个特征识别与金标准比对)...")
+            if verbose: print(f"\n📝 Starting 【Emotion2Vec+ Discrete Classification Accuracy Calculation】 ({num_samples} Feature Recognition vs Ground Truth Comparisons)...")
             refs = _load_data_list(reference_labels, "Reference Labels", "label")
             
             if len(refs) != num_samples:
-                raise ValueError(f"参考标签数量 ({len(refs)}) 与目标音频数量 ({num_samples}) 不匹配！")
+                raise ValueError(f"Reference label count ({len(refs)}) does not match target audio count ({num_samples})!")
 
             preds = self._extract_cls_emotion(tgt_paths)
             
@@ -253,17 +253,17 @@ class EmotionEvaluator:
             results["Audio_Emotion_Accuracy"] = round(acc, 4)
 
 
-        # ==================== 输出反馈 ====================
+        # ==================== Output Feedback ====================
         if verbose:
-            print("\n📊 [EmotionEvaluator] Emotion2Vec+ 综合评测报告:")
-            print(f"   - 有效评测样本量: {num_samples}条")
+            print("\n📊 [EmotionEvaluator] Emotion2Vec+ Comprehensive Evaluation Report:")
+            print(f"   - Valid Evaluation Samples: {num_samples} items")
             
             if run_fidelity:
-                print("\n   [深度学习综合特征保真度] (数值范围[-1, 1]，越接近 1.00 代表整体情感越相似)")
-                print(f"   - Emotion2Vec+ 综合情感特征余弦相似度:         {results['Emotion2Vec_Cosine_Similarity']:.4f}")
+                print("\n   [Cross-modal Comprehensive Fidelity] (Value range [-1, 1], closer to 1.00 indicates higher emotional similarity)")
+                print(f"   - Emotion2Vec+ Comprehensive Emotional Feature Cosine Similarity:         {results['Emotion2Vec_Cosine_Similarity']:.4f}")
             
             if run_classification:
-                print("\n   [深度学习离散情感识别分类率] (数值越高代表预设标签识别越准)")
-                print(f"   - Audio Emotion Accuracy (离散情感识别准确率): {results['Audio_Emotion_Accuracy']:.2%}")
+                print("\n   [Deep Learning Discrete Emotion Recognition Accuracy] (Higher values indicate better preset label recognition)")
+                print(f"   - Audio Emotion Accuracy (Discrete Emotion Recognition Accuracy): {results['Audio_Emotion_Accuracy']:.2%}")
                 
         return results

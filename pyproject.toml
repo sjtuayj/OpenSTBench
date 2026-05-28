@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "OpenSTBench"
-version = "1.0.0"  
-description = "Open speech and translation benchmarking toolkit supporting MT, ASR, TTS, SimulST, VC, and paralinguistics with optimized CJK language support"
+version = "1.1.0"  
+description = "Unified multidimensional evaluation toolkit for S2TT and S2ST systems in offline and streaming speech translation settings"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.9,<3.11"
 license = {text = "MIT"}
@@ -15,9 +15,9 @@ authors = [
 
 keywords = [
     "translation", "evaluation", "BLEU", "COMET", "BLEURT",
-    "ASR", "speech-synthesis", "voice-conversion", "UTMOS", "WER",
-    "machine-translation", "multilingual", "CJK", "emotion",
-    "paralinguistics", "CLAP", "audio-events"
+    "speech-translation", "S2TT", "S2ST", "streaming", "latency",
+    "temporal-consistency", "UTMOS", "WER", "speaker-preservation",
+    "emotion", "paralinguistics", "CLAP", "audio-events"
 ]
 
 classifiers = [
@@ -37,6 +37,7 @@ dependencies = [
     "tqdm",
     "scipy",
     "soundfile",
+    "jiwer",
     "textgrid",
     "transformers",    
     "matplotlib",

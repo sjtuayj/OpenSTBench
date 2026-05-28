@@ -9,7 +9,7 @@ actually accessed.
 from importlib import import_module
 from typing import Dict, Tuple
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "TranslationEvaluator",
@@ -37,11 +37,11 @@ __all__ = [
     "WriteAction",
     "load_text_from_file_or_list",
     "load_audio_from_folder",
-    "Dataset",
-    "load_dataset",
-    "list_datasets",
-    "get_dataset_info",
-    "create_dataset_from_json",
+    # "Dataset",
+    # "load_dataset",
+    # "list_datasets",
+    # "get_dataset_info",
+    # "create_dataset_from_json",
 ]
 
 
@@ -76,16 +76,16 @@ _EXPORT_SPECS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("speech_quality_evaluator", ("SpeechQualityEvaluator",)),
     ("temporal_consistency_evaluator", ("TemporalConsistencyEvaluator",)),
     ("speaker_similarity_evaluator", ("SpeakerSimilarityEvaluator",)),
-    (
-        "dataset",
-        (
-            "Dataset",
-            "create_dataset_from_json",
-            "get_dataset_info",
-            "list_datasets",
-            "load_dataset",
-        ),
-    ),
+    # (
+    #     "dataset",
+    #     (
+    #         "Dataset",
+    #         "create_dataset_from_json",
+    #         "get_dataset_info",
+    #         "list_datasets",
+    #         "load_dataset",
+    #     ),
+    # ),
     ("latency.agent", ("AgentPipeline", "GenericAgent")),
     ("latency.basics", ("ReadAction", "WriteAction")),
     ("latency.cli", ("LatencyEvaluator",)),
