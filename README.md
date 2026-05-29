@@ -64,6 +64,12 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 
 Offline and streaming are supported system settings, not separate metric dimensions. Use the evaluators that match the available outputs: text, generated speech, source/target audio pairs, event annotations, or streaming traces.
 
+## Experimental Overview
+
+The radar plot below illustrates the multidimensional view produced by OpenSTBench for representative streaming and offline speech translation systems. It summarizes how systems can differ across translation quality, speech quality, and temporal quality: a system with strong translation quality may still show different behavior in speech realization, speaker or emotion preservation, paralinguistic fidelity, temporal consistency, and latency or efficiency.
+
+![OpenSTBench experimental radar overview](./radar.png)
+
 ## Datasets
 
 The paper uses the following datasets. Please follow the license and access terms of each original dataset.
@@ -128,6 +134,15 @@ python -m openstbench.latency.cli --help
 - For `zh`, `ja`, and `ko`, speech consistency reports `CER_Consistency`; other languages report `WER_Consistency`.
 - Evaluators that accept pretrained model sources use a local-first rule. If the supplied local path exists, OpenSTBench uses it; otherwise it falls back to the configured remote model id.
 - Optional dependencies are loaded only when the corresponding evaluator needs them.
+
+
+## Acknowledgements
+
+- We especially thank [SimulEval](https://github.com/facebookresearch/SimulEval), from which parts of OpenSTBench's latency evaluation components are adapted
+- [sacreBLEU](https://github.com/mjpost/sacrebleu), [COMET](https://github.com/Unbabel/COMET), and [bleurt-pytorch](https://github.com/lucadiliello/bleurt-pytorch), a PyTorch port of [BLEURT](https://github.com/google-research/bleurt), for translation quality evaluation
+- [Whisper](https://github.com/openai/whisper), [SpeechMOS/UTMOS](https://github.com/tarepan/SpeechMOS), [Resemblyzer](https://github.com/resemble-ai/Resemblyzer), and [WavLM](https://github.com/microsoft/unilm/tree/master/wavlm) for speech quality and speaker similarity evaluation
+- [FunASR](https://github.com/modelscope/FunASR) and [Emotion2Vec](https://modelscope.cn/models/iic/emotion2vec_plus_large) for emotion preservation evaluation
+- [CLAP](https://huggingface.co/laion/clap-htsat-fused) and [Hugging Face Transformers](https://github.com/huggingface/transformers) for paralinguistic event evaluation
 
 
 ## License

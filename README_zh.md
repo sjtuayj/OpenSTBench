@@ -64,6 +64,12 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 
 离线和流式是系统设置，不是独立的指标维度。请根据系统实际输出选择对应评测器：文本、生成语音、源/目标语音对、事件标注或流式轨迹。
 
+## 实验结果概览
+
+下方雷达图展示了 OpenSTBench 对代表性流式和离线语音翻译系统给出的多维评测视角。该图概括了系统在翻译质量、语音质量和时序质量上的差异：即使系统具有较强的翻译质量，也可能在语音实现、说话人或情感保持、副语言事件保真、时长一致性，以及延迟或效率方面呈现不同表现。
+
+![OpenSTBench 实验结果雷达图](./radar.png)
+
 ## 论文使用的数据集
 
 论文中使用了以下数据集。使用时请遵守各原始数据集的许可证和访问条款。
@@ -128,6 +134,15 @@ python -m openstbench.latency.cli --help
 - 对 `zh`、`ja`、`ko`，语音文本一致性返回 `CER_Consistency`；其他语言返回 `WER_Consistency`。
 - 对接受预训练模型来源的评测器，模型来源采用本地优先规则：如果传入的本地路径存在，则使用本地路径；否则回退到配置的远程模型 id。
 - 可选依赖只会在对应评测器需要时加载。
+
+
+## 致谢
+
+- 特别感谢 [SimulEval](https://github.com/facebookresearch/SimulEval)，OpenSTBench 的部分延迟评测组件基于其代码改写
+- 感谢 [sacreBLEU](https://github.com/mjpost/sacrebleu)、[COMET](https://github.com/Unbabel/COMET)，以及 [bleurt-pytorch](https://github.com/lucadiliello/bleurt-pytorch)；其中 bleurt-pytorch 是 [BLEURT](https://github.com/google-research/bleurt) 的 PyTorch 移植版本，用于翻译质量评测
+- 感谢 [Whisper](https://github.com/openai/whisper)、[SpeechMOS/UTMOS](https://github.com/tarepan/SpeechMOS)、[Resemblyzer](https://github.com/resemble-ai/Resemblyzer) 和 [WavLM](https://github.com/microsoft/unilm/tree/master/wavlm)，用于语音质量和说话人相似度评测
+- 感谢 [FunASR](https://github.com/modelscope/FunASR) 和 [Emotion2Vec](https://modelscope.cn/models/iic/emotion2vec_plus_large)，用于情感保持评测
+- 感谢 [CLAP](https://huggingface.co/laion/clap-htsat-fused) 和 [Hugging Face Transformers](https://github.com/huggingface/transformers)，用于副语言事件评测
 
 
 ## License
