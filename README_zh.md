@@ -144,6 +144,20 @@ python -m openstbench.latency.cli --help
 - 感谢 [FunASR](https://github.com/modelscope/FunASR) 和 [Emotion2Vec](https://modelscope.cn/models/iic/emotion2vec_plus_large)，用于情感保持评测
 - 感谢 [CLAP](https://huggingface.co/laion/clap-htsat-fused) 和 [Hugging Face Transformers](https://github.com/huggingface/transformers)，用于副语言事件评测
 
+## 引用
+
+如果您觉得我们的工作有帮助，请引用：
+```bibtex
+@misc{an2026openstbenchsemanticevaluationspeech,
+      title={OpenSTBench: Beyond Semantic Evaluation for Speech Translation}, 
+      author={Yanjie An and Yuxiang Zhao and Yichi Zhang and Qixi Zheng and Yujie Tu and Keqi Deng and Kai Yu and Xie Chen},
+      year={2026},
+      eprint={2605.30792},
+      archivePrefix={arXiv},
+      primaryClass={eess.AS},
+      url={https://arxiv.org/abs/2605.30792}, 
+}
+```
 
 ## License
 

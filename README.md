@@ -144,6 +144,20 @@ python -m openstbench.latency.cli --help
 - [FunASR](https://github.com/modelscope/FunASR) and [Emotion2Vec](https://modelscope.cn/models/iic/emotion2vec_plus_large) for emotion preservation evaluation
 - [CLAP](https://huggingface.co/laion/clap-htsat-fused) and [Hugging Face Transformers](https://github.com/huggingface/transformers) for paralinguistic event evaluation
 
+## Citation
+If you find our work useful, please cite as：
+
+```bibtex
+@misc{an2026openstbenchsemanticevaluationspeech,
+      title={OpenSTBench: Beyond Semantic Evaluation for Speech Translation}, 
+      author={Yanjie An and Yuxiang Zhao and Yichi Zhang and Qixi Zheng and Yujie Tu and Keqi Deng and Kai Yu and Xie Chen},
+      year={2026},
+      eprint={2605.30792},
+      archivePrefix={arXiv},
+      primaryClass={eess.AS},
+      url={https://arxiv.org/abs/2605.30792}, 
+}
+```
 
 ## License
 
