@@ -82,7 +82,7 @@ The paper uses the following datasets. Please follow the license and access term
 | Dataset | Used for | Link |
 | :--- | :--- | :--- |
 | MSLT dev | Translation quality, speech quality, temporal consistency, latency | [Microsoft Speech Language Translation Corpus](https://www.microsoft.com/en-us/download/details.aspx?id=54689) |
-| LibriTTS-based paired speaker set | Speaker preservation | The constructed OpenSTBench paired set will be released through [GitHub Releases](https://github.com/sjtuayj/OpenSTBench/releases); the source corpus is [LibriTTS](https://www.openslr.org/60/) |
+| LibriTTS-based paired speaker set | Speaker preservation | The constructed OpenSTBench paired set is available on [Hugging Face Datasets](https://huggingface.co/datasets/ayj111/openstbench-paired-set); the source corpus is [LibriTTS](https://www.openslr.org/60/) |
 | RAVDESS | Emotion preservation | [Audio_Speech_Actors_01-24.zip](https://zenodo.org/records/1188976) from the RAVDESS Zenodo record |
 | MCAE-SPPS | Emotion preservation | [MCAE-SPPS on OSF](https://doi.org/10.17605/OSF.IO/9JYZC) |
 | NonverbalTTS test | Paralinguistic fidelity | [deepvk/NonverbalTTS](https://huggingface.co/datasets/deepvk/NonverbalTTS) |

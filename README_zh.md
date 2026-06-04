@@ -82,7 +82,7 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 | 数据集 | 用途 | 链接 |
 | :--- | :--- | :--- |
 | MSLT dev | 翻译质量、语音质量、时长一致性、延迟 | [Microsoft Speech Language Translation Corpus](https://www.microsoft.com/en-us/download/details.aspx?id=54689) |
-| LibriTTS-based paired speaker set | 说话人保持 | OpenSTBench 构造的 paired set 会通过 [GitHub Releases](https://github.com/sjtuayj/OpenSTBench/releases) 发布；源语料为 [LibriTTS](https://www.openslr.org/60/) |
+| LibriTTS-based paired speaker set | 说话人保持 | OpenSTBench 构造的 paired set 已发布在 [Hugging Face Datasets](https://huggingface.co/datasets/ayj111/openstbench-paired-set)；源语料为 [LibriTTS](https://www.openslr.org/60/) |
 | RAVDESS | 情感保持 | 使用 RAVDESS Zenodo 记录中的 [Audio_Speech_Actors_01-24.zip](https://zenodo.org/records/1188976) 压缩包 |
 | MCAE-SPPS | 情感保持 | [MCAE-SPPS on OSF](https://doi.org/10.17605/OSF.IO/9JYZC) |
 | NonverbalTTS test | 副语言/非语言事件保持 | [deepvk/NonverbalTTS](https://huggingface.co/datasets/deepvk/NonverbalTTS) |
