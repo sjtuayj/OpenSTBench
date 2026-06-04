@@ -26,6 +26,10 @@ pip install OpenSTBench
 本地开发安装：
 
 ```bash
+git clone https://github.com/sjtuayj/OpenSTBench.git
+cd OpenSTBench
+conda create -n openstbench python=3.10 -y
+conda activate openstbench
 pip install -e .
 ```
 
