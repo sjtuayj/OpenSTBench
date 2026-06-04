@@ -2,6 +2,7 @@
 
 English | [中文](./README_zh.md)
 
+[![arXiv](https://img.shields.io/badge/arXiv-2605.30792-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2605.30792)
 [![PyPI](https://img.shields.io/pypi/v/OpenSTBench?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/OpenSTBench/)
 [![Python](https://img.shields.io/badge/Python-3.9--3.10-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
