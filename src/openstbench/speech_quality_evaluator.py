@@ -15,6 +15,11 @@ try:
 except ImportError:
     whisper = None
 
+try:
+    from opencc import OpenCC
+except ImportError:
+    OpenCC = None
+
 class SpeechQualityEvaluator:
     DEFAULT_WHISPER_MODEL = "medium"
     """
@@ -40,6 +45,8 @@ class SpeechQualityEvaluator:
         self.whisper_language = self._normalize_whisper_language(whisper_language)
         self.utmos_path = utmos_model_path
         self.utmos_ckpt = utmos_ckpt_path
+        self.zh_converter = OpenCC("t2s") if OpenCC is not None else None
+        self._warned_missing_opencc = False
         
         self.whisper_model = None
         self.utmos_model = None
@@ -148,8 +155,15 @@ class SpeechQualityEvaluator:
         return sum(scores) / len(scores) if scores else 0.0
 
     def _preprocess_for_wer(self, text: str, lang: str) -> str:
+        normalized_lang = self._normalize_whisper_language(lang) or str(lang).strip().lower()
         text = self.wer_transform(text)
-        if lang in ["zh", "ja", "ko"]:
+        if normalized_lang == "zh":
+            if self.zh_converter is not None:
+                text = self.zh_converter.convert(text)
+            elif not self._warned_missing_opencc:
+                print("Warning: OpenCC is not installed; Chinese CER will not normalize traditional/simplified variants.")
+                self._warned_missing_opencc = True
+        if normalized_lang in ["zh", "ja", "ko"]:
             text = text.replace(" ", "")
             return " ".join(list(text))
         return text
@@ -194,7 +208,8 @@ class SpeechQualityEvaluator:
                 
                 if clean_refs:
                     error_rate = jiwer.wer(clean_refs, clean_hyps)
-                    metric_name = "CER_Consistency" if target_lang in ['zh', 'ja', 'ko'] else "WER_Consistency"
+                    normalized_target_lang = self._normalize_whisper_language(target_lang) or str(target_lang).strip().lower()
+                    metric_name = "CER_Consistency" if normalized_target_lang in ['zh', 'ja', 'ko'] else "WER_Consistency"
                     results[metric_name] = round(error_rate, 4)
                 else:
                     print("   ⚠️ The provided generated text is empty after cleaning, cannot compute distribution error rate.") 

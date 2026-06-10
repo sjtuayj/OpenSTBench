@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "OpenSTBench"
-version = "1.1.0"  
+version = "1.2.0"  
 description = "Unified multidimensional evaluation toolkit for S2TT and S2ST systems in offline and streaming speech translation settings"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.9,<3.11"
@@ -29,6 +29,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "setuptools==80.9.0",
     "torch>=2.6,<2.7",
     "torchaudio>=2.6,<2.7",
     "numpy",
@@ -53,10 +54,10 @@ Documentation = "https://github.com/sjtuayj/OpenSTBench#readme"
 [project.optional-dependencies]
 comet = ["unbabel-comet>=2.2.2"]
 whisper = ["openai-whisper"]
-speech_quality = ["jiwer"]
+speech_quality = ["jiwer", "opencc-python-reimplemented"]
 emotion = ["funasr", "modelscope"]  
 paralinguistics = ["transformers"]
-all = ["unbabel-comet>=2.2.2", "openai-whisper", "jiwer", "funasr", "modelscope", "transformers"]
+all = ["unbabel-comet>=2.2.2", "openai-whisper", "jiwer", "opencc-python-reimplemented", "funasr", "modelscope", "transformers"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
