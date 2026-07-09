@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 # Reuse existing loading utilities
 from ._model_loading import resolve_pretrained_source
+from .language_policy import normalize_language_code, speech_consistency_unit, whisper_language_code
 from .translation_evaluator import load_text_from_file_or_list, load_audio_from_folder
 
 try:
@@ -62,18 +63,7 @@ class SpeechQualityEvaluator:
 
     @staticmethod
     def _normalize_whisper_language(language: Optional[str]) -> Optional[str]:
-        if language is None:
-            return None
-        normalized = str(language).strip().lower()
-        if normalized in {"zh", "zh-cn", "cmn", "<|cmn|>"}:
-            return "zh"
-        if normalized in {"en", "eng", "<|eng|>"}:
-            return "en"
-        if normalized in {"ja", "jp", "jpn"}:
-            return "ja"
-        if normalized in {"ko", "kor"}:
-            return "ko"
-        return normalized or None
+        return whisper_language_code(language)
 
     def _load_whisper(self):
         if self.whisper_model is None and self.use_wer:
@@ -155,7 +145,7 @@ class SpeechQualityEvaluator:
         return sum(scores) / len(scores) if scores else 0.0
 
     def _preprocess_for_wer(self, text: str, lang: str) -> str:
-        normalized_lang = self._normalize_whisper_language(lang) or str(lang).strip().lower()
+        normalized_lang = normalize_language_code(lang)
         text = self.wer_transform(text)
         if normalized_lang == "zh":
             if self.zh_converter is not None:
@@ -163,7 +153,7 @@ class SpeechQualityEvaluator:
             elif not self._warned_missing_opencc:
                 print("Warning: OpenCC is not installed; Chinese CER will not normalize traditional/simplified variants.")
                 self._warned_missing_opencc = True
-        if normalized_lang in ["zh", "ja", "ko"]:
+        if speech_consistency_unit(normalized_lang) == "cer":
             text = text.replace(" ", "")
             return " ".join(list(text))
         return text
@@ -208,8 +198,7 @@ class SpeechQualityEvaluator:
                 
                 if clean_refs:
                     error_rate = jiwer.wer(clean_refs, clean_hyps)
-                    normalized_target_lang = self._normalize_whisper_language(target_lang) or str(target_lang).strip().lower()
-                    metric_name = "CER_Consistency" if normalized_target_lang in ['zh', 'ja', 'ko'] else "WER_Consistency"
+                    metric_name = "CER_Consistency" if speech_consistency_unit(target_lang) == "cer" else "WER_Consistency"
                     results[metric_name] = round(error_rate, 4)
                 else:
                     print("   ⚠️ The provided generated text is empty after cleaning, cannot compute distribution error rate.") 

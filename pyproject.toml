@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "OpenSTBench"
-version = "1.2.0"  
+version = "1.2.2"  
 description = "Unified multidimensional evaluation toolkit for S2TT and S2ST systems in offline and streaming speech translation settings"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.9,<3.11"

@@ -9,7 +9,7 @@ actually accessed.
 from importlib import import_module
 from typing import Dict, Tuple
 
-__version__ = "1.2.0"
+__version__ = "1.2.2"
 
 __all__ = [
     "TranslationEvaluator",
@@ -35,6 +35,8 @@ __all__ = [
     "AgentPipeline",
     "ReadAction",
     "WriteAction",
+    "TextSegment",
+    "SpeechSegment",
     "load_text_from_file_or_list",
     "load_audio_from_folder",
     # "Dataset",
@@ -87,7 +89,7 @@ _EXPORT_SPECS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     #     ),
     # ),
     ("latency.agent", ("AgentPipeline", "GenericAgent")),
-    ("latency.basics", ("ReadAction", "WriteAction")),
+    ("latency.basics", ("ReadAction", "WriteAction", "TextSegment", "SpeechSegment")),
     ("latency.cli", ("LatencyEvaluator",)),
 )
 

@@ -10,5 +10,30 @@
 
 from .agent import GenericAgent, AgentPipeline
 from .basics import ReadAction, WriteAction, TextSegment, SpeechSegment
-from .cli import LatencyEvaluator
-from .metrics import register # Allows users to register custom Scorers
+
+__all__ = [
+    "GenericAgent",
+    "AgentPipeline",
+    "ReadAction",
+    "WriteAction",
+    "TextSegment",
+    "SpeechSegment",
+    "LatencyEvaluator",
+    "register",
+]
+
+
+def __getattr__(name):
+    if name == "LatencyEvaluator":
+        from .cli import LatencyEvaluator
+
+        return LatencyEvaluator
+    if name == "register":
+        from .metrics import register
+
+        return register
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

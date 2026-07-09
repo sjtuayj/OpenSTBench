@@ -84,8 +84,9 @@ def load_audio_from_folder(folder_path: str, extensions: tuple = (".wav", ".mp3"
 
 # ==================== Evaluator Core Class ====================
 
-DEFAULT_COMET_MODEL = "Unbabel/wmt22-comet-da"
+DEFAULT_COMET_MODEL = "Unbabel/wmt22-cometkiwi-da"
 DEFAULT_BLEURT_MODEL = "lucadiliello/BLEURT-20"
+COMET_QE_METRIC_NAME = "COMETKiwi"
 
 class TranslationEvaluator:
     """
@@ -237,7 +238,7 @@ class TranslationEvaluator:
         Args:
             reference: Ground truth benchmark translation reference from the dataset (List or file path).
             target_text: Direct text translation output from the translation model (List or file path).
-            source: Optional original source text (mandatory for COMET).
+            source: Optional original source text (mandatory for COMETKiwi/QE).
             target_lang: Target language, affects BLEU Tokenizer selection.
         """
         results = {}
@@ -276,13 +277,19 @@ class TranslationEvaluator:
             except Exception as e:
                 results["BLEURT"] = -1.0
 
-        # 4. COMET
-        if self.use_comet and self.comet and final_src:
+        # 4. COMETKiwi reference-free QE. References may still be passed for
+        # BLEU/chrF++/BLEURT, but COMETKiwi must only receive source and MT.
+        if self.use_comet and self.comet:
+            if not final_src:
+                results[COMET_QE_METRIC_NAME] = -1.0
+                return {k: round(v, 4) if v >= 0 else v for k, v in results.items()}
+            if len(final_src) != len(final_text):
+                raise ValueError("Source and Target Text have different lengths")
             try:
-                data = [{"src": s, "mt": t, "ref": r} for s, t, r in zip(final_src, final_text, final_ref)]
+                data = [{"src": s, "mt": t} for s, t in zip(final_src, final_text)]
                 gpus = 1 if self.device.startswith("cuda") else 0
-                results["COMET"] = self.comet.predict(data, batch_size=8, gpus=gpus).system_score
+                results[COMET_QE_METRIC_NAME] = self.comet.predict(data, batch_size=8, gpus=gpus).system_score
             except Exception as e:
-                results["COMET"] = -1.0
+                results[COMET_QE_METRIC_NAME] = -1.0
         
         return {k: round(v, 4) if v >= 0 else v for k, v in results.items()}
