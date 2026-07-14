@@ -15,6 +15,19 @@ This file lists third-party code and datasets referenced, adapted, or used by Op
 
 The adapted portions are distributed under CC BY-SA 4.0. Users of these portions must comply with the terms of CC BY-SA 4.0, including attribution and ShareAlike requirements.
 
+## MetricX
+
+- Project: MetricX
+- Repository: https://github.com/google-research/metricx
+- License: Apache License 2.0
+- License URL: https://www.apache.org/licenses/LICENSE-2.0
+- Usage in OpenSTBench: MetricX text translation quality scoring support.
+- Modified: Yes. The MetricX MT5 regression model class and inference flow were adapted to OpenSTBench's evaluator interface and local-first model loading.
+- Affected files:
+  - `src/openstbench/metricx_evaluator.py`
+
+The adapted MetricX portions are distributed under the Apache License 2.0.
+
 ## Datasets
 
 OpenSTBench references third-party datasets for evaluation and reproduction of the paper results. These datasets are not distributed under the OpenSTBench code license.

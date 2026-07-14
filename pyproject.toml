@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "OpenSTBench"
-version = "1.2.3"  
+version = "1.2.4"  
 description = "Unified multidimensional evaluation toolkit for S2TT and S2ST systems in offline and streaming speech translation settings"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.9,<3.11"
@@ -14,7 +14,7 @@ authors = [
 ]
 
 keywords = [
-    "translation", "evaluation", "BLEU", "COMET", "BLEURT",
+    "translation", "evaluation", "BLEU", "COMET", "BLEURT", "MetricX",
     "speech-translation", "S2TT", "S2ST", "streaming", "latency",
     "temporal-consistency", "UTMOS", "WER", "speaker-preservation",
     "emotion", "paralinguistics", "CLAP", "audio-events"
@@ -57,7 +57,26 @@ whisper = ["openai-whisper"]
 speech_quality = ["jiwer", "opencc-python-reimplemented"]
 emotion = ["funasr", "modelscope"]  
 paralinguistics = ["transformers"]
-all = ["unbabel-comet>=2.2.2", "openai-whisper", "jiwer", "opencc-python-reimplemented", "funasr", "modelscope", "transformers"]
+metricx = [
+    "transformers[torch]==4.30.2",
+    "sentencepiece==0.1.99",
+    "datasets==2.13.1",
+    "protobuf==3.20.3",
+    "accelerate>=0.26.0",
+]
+all = [
+    "unbabel-comet>=2.2.2",
+    "openai-whisper",
+    "jiwer",
+    "opencc-python-reimplemented",
+    "funasr",
+    "modelscope",
+    "transformers[torch]==4.30.2",
+    "sentencepiece==0.1.99",
+    "datasets==2.13.1",
+    "protobuf==3.20.3",
+    "accelerate>=0.26.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

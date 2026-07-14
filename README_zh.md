@@ -41,8 +41,14 @@ pip install "OpenSTBench[whisper]"
 pip install "OpenSTBench[speech_quality]"
 pip install "OpenSTBench[emotion]"
 pip install "OpenSTBench[paralinguistics]"
+pip install "OpenSTBench[metricx]"
 pip install "OpenSTBench[all]"
 ```
+
+MetricX 遵循官方 `google-research/metricx` 运行环境要求。安装
+`OpenSTBench[metricx]` 或 `OpenSTBench[all]` 时会固定 MetricX 兼容依赖，
+包括 `transformers[torch]==4.30.2`、`sentencepiece==0.1.99`、
+`datasets==2.13.1`、`protobuf==3.20.3` 和 `accelerate>=0.26.0`。
 
 BLEURT 需要单独安装：
 
@@ -59,7 +65,7 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 
 | 维度 | 评测器 | 系统类型 | 主要输出 |
 | :--- | :--- | :--- | :--- |
-| 翻译质量 | `TranslationEvaluator` | S2TT、S2ST 转写文本 | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT` |
+| 翻译质量 | `TranslationEvaluator` | S2TT、S2ST 转写文本 | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT`, `MetricX`, `MetricX_QE` |
 | 语音质量 | `SpeechQualityEvaluator` | S2ST | `UTMOS`, `WER_Consistency`, `CER_Consistency` |
 | 语音质量 | `SpeakerSimilarityEvaluator` | S2ST | `average_wavlm_large_similarity`, `average_resemblyzer_similarity` |
 | 语音质量 | `EmotionEvaluator` | S2ST | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
@@ -98,6 +104,7 @@ evaluator = TranslationEvaluator(
     use_chrf=True,
     use_comet=False,
     use_bleurt=False,
+    use_metricx=True,
     device="cuda",
 )
 
@@ -139,12 +146,13 @@ python -m openstbench.latency.cli --help
 - 对 `zh`、`ja`、`ko`，语音文本一致性返回 `CER_Consistency`；其他语言返回 `WER_Consistency`。
 - 对接受预训练模型来源的评测器，模型来源采用本地优先规则：如果传入的本地路径存在，则使用本地路径；否则回退到配置的远程模型 id。
 - 可选依赖只会在对应评测器需要时加载。
+- `TranslationEvaluator` 默认启用 MetricX。MetricX 严格遵循 google-research/metricx 官方 README，只使用文本，返回 `[0, 25]` 范围内的错误分数，分数越低越好；如需关闭可设置 `use_metricx=False`。
 
 
 ## 致谢
 
 - 特别感谢 [SimulEval](https://github.com/facebookresearch/SimulEval)，OpenSTBench 的部分延迟评测组件基于其代码改写
-- 感谢 [sacreBLEU](https://github.com/mjpost/sacrebleu)、[COMET](https://github.com/Unbabel/COMET)，以及 [bleurt-pytorch](https://github.com/lucadiliello/bleurt-pytorch)；其中 bleurt-pytorch 是 [BLEURT](https://github.com/google-research/bleurt) 的 PyTorch 移植版本，用于翻译质量评测
+- 感谢 [sacreBLEU](https://github.com/mjpost/sacrebleu)、[COMET](https://github.com/Unbabel/COMET)、[MetricX](https://github.com/google-research/metricx)，以及 [bleurt-pytorch](https://github.com/lucadiliello/bleurt-pytorch)；其中 bleurt-pytorch 是 [BLEURT](https://github.com/google-research/bleurt) 的 PyTorch 移植版本，用于翻译质量评测
 - 感谢 [Whisper](https://github.com/openai/whisper)、[SpeechMOS/UTMOS](https://github.com/tarepan/SpeechMOS)、[Resemblyzer](https://github.com/resemble-ai/Resemblyzer) 和 [WavLM](https://github.com/microsoft/unilm/tree/master/wavlm)，用于语音质量和说话人相似度评测
 - 感谢 [FunASR](https://github.com/modelscope/FunASR) 和 [Emotion2Vec](https://modelscope.cn/models/iic/emotion2vec_plus_large)，用于情感保持评测
 - 感谢 [CLAP](https://huggingface.co/laion/clap-htsat-fused) 和 [Hugging Face Transformers](https://github.com/huggingface/transformers)，用于副语言事件评测

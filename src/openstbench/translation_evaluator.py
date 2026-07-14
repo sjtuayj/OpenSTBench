@@ -9,6 +9,13 @@ import sacrebleu
 import torch
 
 from ._model_loading import resolve_pretrained_source
+from .metricx_evaluator import (
+    DEFAULT_METRICX_TOKENIZER,
+    DEFAULT_METRICX_VERSION,
+    METRICX_METRIC_NAME,
+    METRICX_QE_METRIC_NAME,
+    MetricXScorer,
+)
 
 
 # ==================== Configuration ====================
@@ -102,7 +109,7 @@ COMET_QE_METRIC_NAME = "COMETKiwi"
 class TranslationEvaluator:
     """
     Text-side Translation Quality Evaluator: Supports text translation metrics
-    such as BLEU, chrF++, COMET, COMETKiwi, and BLEURT.
+    such as BLEU, chrF++, COMET, COMETKiwi, BLEURT, and MetricX.
     """
 
     def __init__(
@@ -111,10 +118,17 @@ class TranslationEvaluator:
         use_chrf: bool = True,
         use_comet: bool = True,
         use_bleurt: bool = False,
+        use_metricx: bool = True,
         comet_model: str = DEFAULT_COMET_MODEL,
         comet_qe_model: str = DEFAULT_COMET_QE_MODEL,
         bleurt_path: Optional[str] = None,
         bleurt_model: Optional[str] = None,
+        metricx_version: str = DEFAULT_METRICX_VERSION,
+        metricx_model: Optional[str] = None,
+        metricx_qe_model: Optional[str] = None,
+        metricx_tokenizer: str = DEFAULT_METRICX_TOKENIZER,
+        metricx_batch_size: int = 1,
+        metricx_max_input_length: Optional[int] = None,
         device: Optional[str] = None,
     ):
 
@@ -122,6 +136,7 @@ class TranslationEvaluator:
         self.use_chrf = use_chrf
         self.use_comet = use_comet
         self.use_bleurt = use_bleurt
+        self.use_metricx = use_metricx
 
         if device is not None:
             self.device = device
@@ -136,6 +151,14 @@ class TranslationEvaluator:
         self.comet_qe_model = comet_qe_model
         self.comet = None
         self.comet_qe = None
+
+        self.metricx_version = str(metricx_version)
+        self.metricx_model = metricx_model
+        self.metricx_qe_model = metricx_qe_model
+        self.metricx_tokenizer = metricx_tokenizer
+        self.metricx_batch_size = metricx_batch_size
+        self.metricx_max_input_length = metricx_max_input_length
+        self.metricx_scorer = None
 
         self.bleurt_model = None
         self.bleurt_tokenizer = None
@@ -152,7 +175,10 @@ class TranslationEvaluator:
         return False
 
     def cleanup(self):
-        for attr in ["comet", "comet_qe", "bleurt_model", "bleurt_tokenizer"]:
+        metricx_scorer = getattr(self, "metricx_scorer", None)
+        if metricx_scorer is not None:
+            metricx_scorer.cleanup()
+        for attr in ["comet", "comet_qe", "bleurt_model", "bleurt_tokenizer", "metricx_scorer"]:
             if hasattr(self, attr) and getattr(self, attr) is not None:
                 delattr(self, attr)
         if torch.cuda.is_available():
@@ -224,6 +250,20 @@ class TranslationEvaluator:
         except Exception as e:
             print(f"BLEURT loading failed: {e}")
 
+    def _load_metricx(self):
+        if self.metricx_scorer is None:
+            print(f"Loading MetricX-{self.metricx_version}")
+            self.metricx_scorer = MetricXScorer(
+                version=self.metricx_version,
+                model=self.metricx_model,
+                qe_model=self.metricx_qe_model,
+                tokenizer=self.metricx_tokenizer,
+                max_input_length=self.metricx_max_input_length,
+                batch_size=self.metricx_batch_size,
+                device=self.device,
+            )
+        return self.metricx_scorer
+
     def _get_bleu_tokenizer_name(self, lang: str) -> str:
         if lang == "zh":
             return "zh"
@@ -265,7 +305,7 @@ class TranslationEvaluator:
         Args:
             reference: Optional benchmark translation reference from the dataset.
             target_text: Direct text translation output from the translation model.
-            source: Optional original source text, mandatory for COMET and COMETKiwi.
+            source: Optional original source text, mandatory for COMET, COMETKiwi, and MetricX_QE.
             target_lang: Target language, affects BLEU tokenizer selection.
         """
         results = {}
@@ -346,5 +386,31 @@ class TranslationEvaluator:
                         results[COMET_QE_METRIC_NAME] = self.comet_qe.predict(data, batch_size=8, gpus=gpus).system_score
                     except Exception:
                         results[COMET_QE_METRIC_NAME] = -1.0
+
+        # 5. MetricX. MetricX is isolated from the other text metrics.
+        if self.use_metricx:
+            if final_ref is not None:
+                try:
+                    metricx = self._load_metricx()
+                    sources_for_metricx = final_src if final_src is not None else None
+                    results[METRICX_METRIC_NAME] = metricx.score_reference(
+                        candidates=final_text,
+                        references=final_ref,
+                        sources=sources_for_metricx,
+                    )
+                except Exception as e:
+                    print(f"{METRICX_METRIC_NAME} scoring failed: {e}")
+                    results[METRICX_METRIC_NAME] = -1.0
+
+            if final_src is not None:
+                try:
+                    metricx = self._load_metricx()
+                    results[METRICX_QE_METRIC_NAME] = metricx.score_qe(
+                        candidates=final_text,
+                        sources=final_src,
+                    )
+                except Exception as e:
+                    print(f"{METRICX_QE_METRIC_NAME} scoring failed: {e}")
+                    results[METRICX_QE_METRIC_NAME] = -1.0
 
         return {k: round(v, 4) if v >= 0 else v for k, v in results.items()}

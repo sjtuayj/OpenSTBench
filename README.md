@@ -41,8 +41,14 @@ pip install "OpenSTBench[whisper]"
 pip install "OpenSTBench[speech_quality]"
 pip install "OpenSTBench[emotion]"
 pip install "OpenSTBench[paralinguistics]"
+pip install "OpenSTBench[metricx]"
 pip install "OpenSTBench[all]"
 ```
+
+MetricX follows the official `google-research/metricx` runtime requirements. Installing
+`OpenSTBench[metricx]` or `OpenSTBench[all]` pins the MetricX-compatible stack,
+including `transformers[torch]==4.30.2`, `sentencepiece==0.1.99`,
+`datasets==2.13.1`, `protobuf==3.20.3`, and `accelerate>=0.26.0`.
 
 BLEURT is installed separately:
 
@@ -59,7 +65,7 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 
 | Dimension | Evaluator | System type | Main outputs |
 | :--- | :--- | :--- | :--- |
-| Translation Quality | `TranslationEvaluator` | S2TT, S2ST transcripts | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT` |
+| Translation Quality | `TranslationEvaluator` | S2TT, S2ST transcripts | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT`, `MetricX`, `MetricX_QE` |
 | Speech Quality | `SpeechQualityEvaluator` | S2ST | `UTMOS`, `WER_Consistency`, `CER_Consistency` |
 | Speech Quality | `SpeakerSimilarityEvaluator` | S2ST | `average_wavlm_large_similarity`, `average_resemblyzer_similarity` |
 | Speech Quality | `EmotionEvaluator` | S2ST | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
@@ -98,6 +104,7 @@ evaluator = TranslationEvaluator(
     use_chrf=True,
     use_comet=False,
     use_bleurt=False,
+    use_metricx=True,
     device="cuda",
 )
 
@@ -139,12 +146,13 @@ python -m openstbench.latency.cli --help
 - For `zh`, `ja`, and `ko`, speech consistency reports `CER_Consistency`; other languages report `WER_Consistency`.
 - Evaluators that accept pretrained model sources use a local-first rule. If the supplied local path exists, OpenSTBench uses it; otherwise it falls back to the configured remote model id.
 - Optional dependencies are loaded only when the corresponding evaluator needs them.
+- MetricX is enabled by default in `TranslationEvaluator`. It follows the official google-research/metricx README, uses text only, reports error scores in `[0, 25]` where lower is better, and can be disabled with `use_metricx=False`.
 
 
 ## Acknowledgements
 
 - We especially thank [SimulEval](https://github.com/facebookresearch/SimulEval), from which parts of OpenSTBench's latency evaluation components are adapted
-- [sacreBLEU](https://github.com/mjpost/sacrebleu), [COMET](https://github.com/Unbabel/COMET), and [bleurt-pytorch](https://github.com/lucadiliello/bleurt-pytorch), a PyTorch port of [BLEURT](https://github.com/google-research/bleurt), for translation quality evaluation
+- [sacreBLEU](https://github.com/mjpost/sacrebleu), [COMET](https://github.com/Unbabel/COMET), [MetricX](https://github.com/google-research/metricx), and [bleurt-pytorch](https://github.com/lucadiliello/bleurt-pytorch), a PyTorch port of [BLEURT](https://github.com/google-research/bleurt), for translation quality evaluation
 - [Whisper](https://github.com/openai/whisper), [SpeechMOS/UTMOS](https://github.com/tarepan/SpeechMOS), [Resemblyzer](https://github.com/resemble-ai/Resemblyzer), and [WavLM](https://github.com/microsoft/unilm/tree/master/wavlm) for speech quality and speaker similarity evaluation
 - [FunASR](https://github.com/modelscope/FunASR) and [Emotion2Vec](https://modelscope.cn/models/iic/emotion2vec_plus_large) for emotion preservation evaluation
 - [CLAP](https://huggingface.co/laion/clap-htsat-fused) and [Hugging Face Transformers](https://github.com/huggingface/transformers) for paralinguistic event evaluation
