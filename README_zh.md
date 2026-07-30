@@ -65,7 +65,7 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 
 | 维度 | 评测器 | 系统类型 | 主要输出 |
 | :--- | :--- | :--- | :--- |
-| 翻译质量 | `TranslationEvaluator` | S2TT、S2ST 转写文本 | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT`, `MetricX`, `MetricX_QE` |
+| 翻译质量 | `TranslationEvaluator` | S2TT、S2ST 文本或生成语音 | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT`, `MetricX`, `MetricX_QE` 及对应的 `ASR_` 指标 |
 | 语音质量 | `SpeechQualityEvaluator` | S2ST | `UTMOS`, `WER_Consistency`, `CER_Consistency` |
 | 语音质量 | `SpeakerSimilarityEvaluator` | S2ST | `average_wavlm_large_similarity`, `average_resemblyzer_similarity` |
 | 语音质量 | `EmotionEvaluator` | S2ST | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
@@ -113,10 +113,17 @@ scores = evaluator.evaluate_all(
     target_text=["我喜欢看电影。", "今天天气很好。"],
     source=["I like watching movies.", "The weather is nice today."],
     target_lang="zh",
+    asr_text=["我喜欢看电影。", "今天天气很好。"],
 )
 
 print(scores)
 ```
+
+ASR 翻译质量评测默认开启，但只有传入 `target_audio` 或预先生成的
+`asr_text` 时才会执行。若要直接转写生成语音，可将单个音频、音频路径列表或
+音频目录传给 `target_audio`；Whisper 默认使用 `medium`，可通过
+`TranslationEvaluator(whisper_model="large-v3")` 更换。设置
+`use_asr=False` 可关闭全部 `ASR_` 指标。
 
 ## 示例
 
@@ -147,6 +154,7 @@ python -m openstbench.latency.cli --help
 - 对接受预训练模型来源的评测器，模型来源采用本地优先规则：如果传入的本地路径存在，则使用本地路径；否则回退到配置的远程模型 id。
 - 可选依赖只会在对应评测器需要时加载。
 - `TranslationEvaluator` 默认启用 MetricX。MetricX 严格遵循 google-research/metricx 官方 README，只使用文本，返回 `[0, 25]` 范围内的错误分数，分数越低越好；如需关闭可设置 `use_metricx=False`。
+- `TranslationEvaluator` 同时默认启用全部指标的 ASR 版本。传入 `target_audio` 时会先由 Whisper 转写生成语音，再用当前已启用的翻译指标评分；传入 `asr_text` 时直接使用已有转写。不传这两种输入时保持原有纯文本评测行为。
 
 
 ## 致谢

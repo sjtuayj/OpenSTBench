@@ -65,7 +65,7 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 
 | Dimension | Evaluator | System type | Main outputs |
 | :--- | :--- | :--- | :--- |
-| Translation Quality | `TranslationEvaluator` | S2TT, S2ST transcripts | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT`, `MetricX`, `MetricX_QE` |
+| Translation Quality | `TranslationEvaluator` | S2TT, S2ST text or generated speech | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT`, `MetricX`, `MetricX_QE`, and their `ASR_` variants |
 | Speech Quality | `SpeechQualityEvaluator` | S2ST | `UTMOS`, `WER_Consistency`, `CER_Consistency` |
 | Speech Quality | `SpeakerSimilarityEvaluator` | S2ST | `average_wavlm_large_similarity`, `average_resemblyzer_similarity` |
 | Speech Quality | `EmotionEvaluator` | S2ST | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
@@ -113,10 +113,18 @@ scores = evaluator.evaluate_all(
     target_text=["我喜欢看电影。", "今天天气很好。"],
     source=["I like watching movies.", "The weather is nice today."],
     target_lang="zh",
+    asr_text=["我喜欢看电影。", "今天天气很好。"],
 )
 
 print(scores)
 ```
+
+ASR translation-quality evaluation is enabled by default and runs only when
+`target_audio` or precomputed `asr_text` is supplied. To transcribe generated
+speech directly, pass a file, a list of files, or a directory as
+`target_audio`; Whisper defaults to `medium` and can be changed with
+`TranslationEvaluator(whisper_model="large-v3")`. Set `use_asr=False` to
+disable every `ASR_` metric.
 
 ## Examples
 
@@ -147,6 +155,7 @@ python -m openstbench.latency.cli --help
 - Evaluators that accept pretrained model sources use a local-first rule. If the supplied local path exists, OpenSTBench uses it; otherwise it falls back to the configured remote model id.
 - Optional dependencies are loaded only when the corresponding evaluator needs them.
 - MetricX is enabled by default in `TranslationEvaluator`. It follows the official google-research/metricx README, uses text only, reports error scores in `[0, 25]` where lower is better, and can be disabled with `use_metricx=False`.
+- `TranslationEvaluator` also enables ASR variants by default. With `target_audio`, Whisper transcribes the generated speech before the same enabled translation metrics are applied; with `asr_text`, the supplied transcript is used directly. Calls without either input preserve the text-only behavior.
 
 
 ## Acknowledgements

@@ -9,7 +9,11 @@ from tqdm import tqdm
 # Reuse existing loading utilities
 from ._model_loading import resolve_pretrained_source
 from .language_policy import normalize_language_code, speech_consistency_unit, whisper_language_code
-from .translation_evaluator import load_text_from_file_or_list, load_audio_from_folder
+from .translation_evaluator import (
+    load_asr_text_from_file_or_list,
+    load_audio_from_folder,
+    load_text_from_file_or_list,
+)
 
 try:
     import whisper
@@ -161,11 +165,13 @@ class SpeechQualityEvaluator:
     def evaluate_all(self, 
                      target_audio: Union[List[str], str],
                      target_text: Optional[Union[List[str], str]] = None,
-                     target_lang: str = "en") -> Dict[str, float]:
+                     target_lang: str = "en",
+                     asr_text: Optional[Union[List[str], str]] = None) -> Dict[str, float]:
         """
         :param target_audio: List of paths or directory to the model-generated audio.
         :param target_text: Text generated synchronously by the model, used as reference for WER/CER calculation.
         :param target_lang: Target language for both audio and text.
+        :param asr_text: Optional precomputed ASR text. When provided, Whisper is not run.
         """
         results = {}
         print(f"\n--- Starting Speech Quality Evaluation (Target Lang: {target_lang}) ---")
@@ -190,8 +196,17 @@ class SpeechQualityEvaluator:
                 if len(texts) != len(audio_paths):
                     raise ValueError(f"Number of generated text lines ({len(texts)}) does not match number of audio files ({len(audio_paths)})!")
                 
-                print("   ➤ Transcribing audio, preparing consistency calculation...")
-                asr_texts = self._transcribe(audio_paths)
+                if asr_text is not None:
+                    asr_texts = load_asr_text_from_file_or_list(asr_text)
+                    if len(asr_texts) != len(audio_paths):
+                        raise ValueError(
+                            f"Number of ASR text lines ({len(asr_texts)}) does not "
+                            f"match number of audio files ({len(audio_paths)})!"
+                        )
+                    print("   ➤ Using precomputed ASR text for consistency calculation...")
+                else:
+                    print("   ➤ Transcribing audio, preparing consistency calculation...")
+                    asr_texts = self._transcribe(audio_paths)
                 
                 clean_refs = [self._preprocess_for_wer(t, target_lang) for t in texts]
                 clean_hyps = [self._preprocess_for_wer(t, target_lang) for t in asr_texts]

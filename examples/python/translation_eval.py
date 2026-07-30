@@ -4,11 +4,15 @@ from openstbench import TranslationEvaluator
 """
 Translation quality example.
 
-Required evaluation inputs:
-- reference: reference translations as list[str], .txt, or .json.
+Candidate inputs (at least one evaluation path is required):
 - target_text: system text outputs as list[str], .txt, or .json.
+- target_audio: generated speech as one file, list[str], or a directory. Whisper
+  transcribes it before the ASR metrics are computed.
+- asr_text: precomputed ASR output as list[str], .txt, or .json. It is mutually
+  exclusive with target_audio and preserves empty rows as failed ASR samples.
 
 Optional evaluation inputs:
+- reference: reference translations as list[str], .txt, or .json.
 - source: source text, required for COMET, COMETKiwi, and MetricX_QE.
 - target_lang: target language code used to choose the BLEU tokenizer.
 
@@ -18,6 +22,11 @@ Configurable evaluator parameters:
 - use_comet: compute COMET; requires the comet extra.
 - use_bleurt: compute BLEURT; requires bleurt-pytorch.
 - use_metricx: compute MetricX; enabled by default and requires the metricx extra.
+- use_asr: compute ASR variants when target_audio or asr_text is supplied;
+  enabled by default.
+- whisper_model: Whisper model name or local path; defaults to "medium".
+- whisper_language: optional language override; defaults to target_lang.
+- asr_cache_path: optional JSONL cache for successful ASR transcripts.
 - comet_model: local path or remote model id.
 - bleurt_path: local BLEURT checkpoint path.
 - bleurt_model: local path or remote model id for BLEURT loading.
@@ -34,9 +43,13 @@ Output metrics:
 - BLEURT
 - MetricX: reference-based score, lower is better.
 - MetricX_QE: reference-free score, lower is better.
+- ASR_sacreBLEU, ASR_chrF++, ASR_COMET, ASR_COMETKiwi, ASR_BLEURT,
+  ASR_MetricX, and ASR_MetricX_QE.
+- ASR_samples_total, ASR_samples_scored, ASR_samples_failed, and ASR_coverage.
 
-MetricX follows the official google-research/metricx README. It only uses text:
-source, target_text/hypothesis, and optionally reference. It does not use audio.
+MetricX follows the official google-research/metricx README and scores text.
+ASR_MetricX first converts target audio to text, then applies the same MetricX
+scorer; MetricX itself never consumes raw audio.
 """ 
 
 
@@ -56,6 +69,10 @@ def main():
         metricx_tokenizer="google/mt5-xl",
         metricx_batch_size=1,
         device="cuda",
+        use_asr=True,
+        whisper_model="medium",
+        whisper_language=None,
+        asr_cache_path="./asr_transcripts_whisper_medium.jsonl",
     )
 
     results = evaluator.evaluate_all(
@@ -63,6 +80,9 @@ def main():
         target_text=["我喜欢看电影。", "今天天气很好。"],
         source=["I like watching movies.", "The weather is nice today."],
         target_lang="zh",
+        # Reuse cached transcripts. Replace this with
+        # target_audio="./generated_wavs" to run Whisper directly.
+        asr_text=["我喜欢看电影。", "今天天气很好。"],
     )
 
     print(results)
