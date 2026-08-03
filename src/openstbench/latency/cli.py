@@ -122,6 +122,7 @@ class LatencyEvaluator:
 
     def compute_latency(self, computation_aware=False, output_dir="./output", show_all_metrics=False):
         results = {}
+        metric_diagnostics = {}
         for name, cls in SCORERS.items():
             try:
                 if "Align" in name:
@@ -137,6 +138,9 @@ class LatencyEvaluator:
                 score = scorer(self.instances)
                 key = f"{name}_CA" if computation_aware else name
                 results[key] = score
+                diagnostics = getattr(scorer, "diagnostics", None)
+                if diagnostics is not None:
+                    metric_diagnostics[key] = diagnostics
             except Exception:
                 pass
 
@@ -150,18 +154,10 @@ class LatencyEvaluator:
             cleaned_results["First_Audio_Delay_(StartOffset_ms)"] = results.get(so_key, 0)
 
         atd_key = "ATD_CA" if computation_aware else "ATD"
-        align_atd_key = "ATD_SpeechAlign_CA" if computation_aware else "ATD_SpeechAlign"
-        if results.get(align_atd_key) is not None and results[align_atd_key] > 0:
-            cleaned_results["Overall_Translation_Delay_(ATD_ms)"] = results[align_atd_key]
-        else:
-            cleaned_results["Overall_Translation_Delay_(ATD_ms)"] = results.get(atd_key, 0)
+        cleaned_results["Overall_Translation_Delay_(ATD_ms)"] = results.get(atd_key, 0)
 
         catd_key = "CustomATD_CA" if computation_aware else "CustomATD"
-        align_catd_key = "CustomATD_SpeechAlign_CA" if computation_aware else "CustomATD_SpeechAlign"
-        if results.get(align_catd_key) is not None and results[align_catd_key] > 0:
-            cleaned_results["End_Action_Delay_(CustomATD_ms)"] = results[align_catd_key]
-        else:
-            cleaned_results["End_Action_Delay_(CustomATD_ms)"] = results.get(catd_key, 0)
+        cleaned_results["End_Action_Delay_(CustomATD_ms)"] = results.get(catd_key, 0)
 
         if "RTF" in results:
             cleaned_results["Real_Time_Factor_(RTF)"] = results["RTF"]
@@ -175,6 +171,7 @@ class LatencyEvaluator:
 
         if show_all_metrics:
             cleaned_results["detailed_all_metrics"] = results
+            cleaned_results["detailed_metric_diagnostics"] = metric_diagnostics
 
         return cleaned_results
 

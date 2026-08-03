@@ -8,7 +8,7 @@
 # The adapted portions in this file are distributed under CC BY-SA 4.0.
 # Modifications were made for OpenSTBench.
 
-from bisect import bisect_right
+from math import isfinite
 from statistics import mean
 
 from .instance import SpeechToSpeechInstance
@@ -133,25 +133,6 @@ class LatencyScorer:
             "speech" if isinstance(ins, SpeechToSpeechInstance) else "text",
         )
 
-    def get_source_chunk_end_times(self, ins):
-        boundaries = list(getattr(ins, "source_chunk_end_times_ms", []) or [])
-        if boundaries:
-            return boundaries
-
-        delays = list(getattr(ins, "delays", []) or [])
-        if delays:
-            return sorted(set(delays))
-
-        source_length = float(getattr(ins, "source_length", 0.0) or 0.0)
-        return [source_length] if source_length > 0 else []
-
-    def source_chunk_id_from_delay(self, boundaries, delay_ms):
-        if not boundaries:
-            return 1
-        idx = bisect_right(boundaries, float(delay_ms))
-        idx = max(1, idx)
-        return min(idx, len(boundaries))
-
     def split_duration_into_tokens(self, duration_ms, token_len_ms):
         if token_len_ms <= 0:
             return [0]
@@ -159,7 +140,7 @@ class LatencyScorer:
         tokens = int(num) * [float(token_len_ms)]
         if rest > 0:
             tokens.append(float(rest))
-        return tokens or [float(duration_ms)]
+        return tokens
 
     def build_source_timeline(self, boundaries, token_len_ms=300.0):
         chunk_sizes = [0]
@@ -215,92 +196,230 @@ class StartOffsetAligned(StartOffset):
 
 @register("ATD")
 class ATDScorer(LatencyScorer):
-    def __call__(self, instances) -> float:
-        scores = []
-        for ins in instances.values():
-            delays = self.get_delays(ins)
-            if not delays:
-                continue
+    """Average Token Delay with SimulEval-compatible speech chunking."""
 
-            source_boundaries = self.get_source_chunk_end_times(ins)
-            if not source_boundaries:
-                continue
+    add_target_duration = True
+    speech_token_len_ms = 300.0
 
-            chunk_sizes = {"src": [], "tgt": []}
-            token_to_chunk = {"src": [], "tgt": [0]}
-            token_to_time = {"src": [], "tgt": [0.0]}
+    def __init__(self, computation_aware=False):
+        super().__init__(computation_aware)
+        self.diagnostics = self._empty_diagnostics()
 
-            (
-                chunk_sizes["src"],
-                token_to_chunk["src"],
-                token_to_time["src"],
-            ) = self.build_source_timeline(source_boundaries, token_len_ms=300.0)
+    @staticmethod
+    def _empty_diagnostics():
+        return {
+            "evaluated_instances": 0,
+            "skipped_instances": 0,
+            "skipped_instance_ids_by_reason": {},
+        }
 
-            output_type = self.get_output_type(ins)
-            target_chunk_sizes = [0] * (len(source_boundaries) + 1)
+    def _skip(self, instance_id, reason):
+        self.diagnostics["skipped_instances"] += 1
+        by_reason = self.diagnostics["skipped_instance_ids_by_reason"]
+        by_reason.setdefault(reason, []).append(instance_id)
 
-            target_delays = []
-            target_chunk_ids = []
-            target_token_lens = []
-            compute_times = []
+    @staticmethod
+    def _as_finite_floats(values):
+        try:
+            numbers = [float(value) for value in values]
+        except (TypeError, ValueError):
+            return None
+        return numbers if all(isfinite(value) for value in numbers) else None
 
-            if output_type == "text":
-                alignment_chunk_ids = getattr(ins, "_alignment_output_chunk_ids", None)
-                if alignment_chunk_ids:
-                    output_emit_delays = list(ins.delays)
-                    for delay, output_chunk_id in zip(delays, alignment_chunk_ids):
-                        output_chunk_idx = max(0, min(output_chunk_id - 1, len(output_emit_delays) - 1))
-                        source_chunk_id = self.source_chunk_id_from_delay(
-                            source_boundaries,
-                            output_emit_delays[output_chunk_idx],
-                        )
-                        target_delays.append(float(delay))
-                        target_chunk_ids.append(source_chunk_id)
-                        target_token_lens.append(0.0)
-                        compute_times.append(0.0)
-                else:
-                    base_emit_delays = list(getattr(ins, "delays", []) or [])
-                    text_compute_times = self.get_incremental_compute_times(ins, len(delays))
+    @staticmethod
+    def _is_non_decreasing(values):
+        return all(curr >= prev for prev, curr in zip(values, values[1:]))
 
-                    for idx, delay in enumerate(delays):
-                        emit_delay = base_emit_delays[idx] if idx < len(base_emit_delays) else delay
-                        source_chunk_id = self.source_chunk_id_from_delay(source_boundaries, emit_delay)
-                        target_delays.append(float(delay))
-                        target_chunk_ids.append(source_chunk_id)
-                        target_token_lens.append(0.0)
-                        extra_compute = 0.0 if self.computation_aware else float(text_compute_times[idx])
-                        compute_times.append(extra_compute)
-            else:
-                speech_compute_times = self.get_incremental_compute_times(ins, len(delays))
+    @staticmethod
+    def _ordered_unique(values):
+        unique = []
+        for value in values:
+            if not unique or value != unique[-1]:
+                unique.append(value)
+        return unique
 
-                for idx, duration_ms in enumerate(getattr(ins, "durations", []) or []):
-                    source_chunk_id = self.source_chunk_id_from_delay(source_boundaries, ins.delays[idx])
-                    token_lens = self.split_duration_into_tokens(duration_ms, token_len_ms=300.0)
-                    if self.computation_aware:
-                        per_token_compute = 0.0
-                    else:
-                        per_token_compute = float(speech_compute_times[idx]) / len(token_lens) if token_lens else 0.0
-                    for token_len in token_lens:
-                        target_delays.append(float(delays[idx]))
-                        target_chunk_ids.append(source_chunk_id)
-                        target_token_lens.append(float(token_len))
-                        compute_times.append(per_token_compute)
+    def _compute_times(self, delays, elapsed):
+        if not self.computation_aware:
+            return [0.0] * len(delays)
+        if elapsed == [0.0] * len(delays):
+            return list(elapsed)
 
+        compute_elapsed = self.subtract(elapsed, delays)
+        return self.subtract(compute_elapsed, [0.0] + compute_elapsed[:-1])
+
+    def _validate_and_prepare_base(self, ins):
+        delays = self._as_finite_floats(getattr(ins, "delays", []) or [])
+        if not delays:
+            return None, "missing_or_invalid_delays"
+        if not self._is_non_decreasing(delays):
+            return None, "non_monotonic_delays"
+
+        elapsed = []
+        if self.computation_aware:
+            elapsed = self._as_finite_floats(getattr(ins, "elapsed", []) or [])
+            if elapsed is None or len(elapsed) != len(delays):
+                return None, "delay_elapsed_length_mismatch"
+
+        return {
+            "delays": delays,
+            "compute_times": self._compute_times(delays, elapsed),
+            "source_boundaries": self._ordered_unique(delays),
+        }, None
+
+    def _prepare_text_target(self, ins, base):
+        delays = base["delays"]
+        compute_times = base["compute_times"]
+        aligned_delays = getattr(ins, "_alignment_delays", None)
+        alignment_chunk_ids = getattr(ins, "_alignment_output_chunk_ids", None)
+
+        if aligned_delays is not None:
+            target_delays = self._as_finite_floats(aligned_delays)
             if not target_delays:
+                return None, "missing_or_invalid_alignment_delays"
+            if not isinstance(alignment_chunk_ids, (list, tuple)) or len(alignment_chunk_ids) != len(target_delays):
+                return None, "alignment_length_mismatch"
+
+            output_action_ids = []
+            action_id = 0
+            prev_delay = None
+            for delay in delays:
+                if prev_delay is None or delay != prev_delay:
+                    action_id += 1
+                output_action_ids.append(action_id)
+                prev_delay = delay
+
+            target_chunk_ids = []
+            for output_chunk_id in alignment_chunk_ids:
+                try:
+                    output_idx = int(output_chunk_id) - 1
+                except (TypeError, ValueError):
+                    return None, "invalid_alignment_chunk_id"
+                if output_idx < 0 or output_idx >= len(output_action_ids):
+                    return None, "invalid_alignment_chunk_id"
+                target_chunk_ids.append(output_action_ids[output_idx])
+
+            return {
+                "delays": target_delays,
+                "chunk_ids": target_chunk_ids,
+                "token_lens": [0.0] * len(target_delays),
+                # Aligned timestamps already use delay/elapsed as selected by
+                # the alignment decorator, so adding compute again would
+                # double count it.
+                "compute_times": [0.0] * len(target_delays),
+            }, None
+
+        target_chunk_ids = []
+        action_id = 0
+        prev_delay = None
+        for delay in delays:
+            if prev_delay is None or delay != prev_delay:
+                action_id += 1
+            target_chunk_ids.append(action_id)
+            prev_delay = delay
+
+        return {
+            "delays": delays,
+            "chunk_ids": target_chunk_ids,
+            "token_lens": [0.0] * len(delays),
+            "compute_times": compute_times,
+        }, None
+
+    def _prepare_speech_target(self, ins, base):
+        delays = base["delays"]
+        durations = self._as_finite_floats(getattr(ins, "durations", []) or [])
+        if durations is None or len(durations) != len(delays):
+            return None, "delay_duration_length_mismatch"
+        if any(duration < 0 for duration in durations):
+            return None, "negative_target_duration"
+
+        groups = []
+        for delay, duration, compute_time in zip(delays, durations, base["compute_times"]):
+            if groups and groups[-1][0] == delay:
+                groups[-1][1] += duration
+                groups[-1][2] += compute_time
+            else:
+                groups.append([delay, duration, compute_time])
+
+        if any(duration <= 0 for _, duration, _ in groups):
+            return None, "non_positive_target_action_duration"
+
+        target_delays = []
+        target_chunk_ids = []
+        target_token_lens = []
+        target_compute_times = []
+        for chunk_id, (delay, duration, compute_time) in enumerate(groups, 1):
+            token_lens = self.split_duration_into_tokens(duration, self.speech_token_len_ms)
+            if not token_lens:
+                return None, "empty_target_action"
+            per_token_compute = compute_time / len(token_lens)
+            target_delays.extend([delay] * len(token_lens))
+            target_chunk_ids.extend([chunk_id] * len(token_lens))
+            target_token_lens.extend(token_lens)
+            target_compute_times.extend([per_token_compute] * len(token_lens))
+
+        return {
+            "delays": target_delays,
+            "chunk_ids": target_chunk_ids,
+            "token_lens": target_token_lens,
+            "compute_times": target_compute_times,
+        }, None
+
+    def _score_instance(self, ins):
+        base, reason = self._validate_and_prepare_base(ins)
+        if reason is not None:
+            return None, reason
+
+        source_boundaries = base["source_boundaries"]
+        if not source_boundaries:
+            return None, "missing_source_boundaries"
+
+        chunk_sizes = {"src": [], "tgt": []}
+        token_to_chunk = {"src": [], "tgt": [0]}
+        token_to_time = {"src": [], "tgt": [0.0]}
+        (
+            chunk_sizes["src"],
+            token_to_chunk["src"],
+            token_to_time["src"],
+        ) = self.build_source_timeline(source_boundaries, token_len_ms=self.speech_token_len_ms)
+
+        if self.get_output_type(ins) == "text":
+            target, reason = self._prepare_text_target(ins, base)
+        else:
+            target, reason = self._prepare_speech_target(ins, base)
+        if reason is not None:
+            return None, reason
+
+        target_chunk_sizes = [0] * (len(source_boundaries) + 1)
+        for chunk_id in target["chunk_ids"]:
+            if chunk_id <= 0 or chunk_id >= len(target_chunk_sizes):
+                return None, "invalid_target_chunk_id"
+            target_chunk_sizes[chunk_id] += 1
+            token_to_chunk["tgt"].append(chunk_id)
+        chunk_sizes["tgt"] = target_chunk_sizes
+
+        for delay, compute_time, token_len in zip(
+            target["delays"],
+            target["compute_times"],
+            target["token_lens"],
+        ):
+            target_start = max(delay, token_to_time["tgt"][-1])
+            playback_time = token_len if self.add_target_duration else 0.0
+            token_to_time["tgt"].append(target_start + playback_time + compute_time)
+
+        if len(token_to_chunk["tgt"]) <= 1:
+            return None, "missing_target_tokens"
+        return self.compute_algo(chunk_sizes, token_to_chunk, token_to_time), None
+
+    def __call__(self, instances) -> float:
+        self.diagnostics = self._empty_diagnostics()
+        scores = []
+        for instance_id, ins in instances.items():
+            score, reason = self._score_instance(ins)
+            if reason is not None:
+                self._skip(instance_id, reason)
                 continue
-
-            for chunk_id in target_chunk_ids:
-                target_chunk_sizes[chunk_id] += 1
-                token_to_chunk["tgt"].append(chunk_id)
-
-            chunk_sizes["tgt"] = target_chunk_sizes
-
-            for delay, comp, token_len in zip(target_delays, compute_times, target_token_lens):
-                prev_tgt = token_to_time["tgt"][-1]
-                start = max(float(delay), prev_tgt)
-                token_to_time["tgt"].append(start + float(token_len) + float(comp))
-
-            scores.append(self.compute_algo(chunk_sizes, token_to_chunk, token_to_time))
+            scores.append(score)
+            self.diagnostics["evaluated_instances"] += 1
 
         return mean(scores) if scores else 0.0
 
@@ -313,90 +432,7 @@ class ATDScorerAligned(ATDScorer):
 
 @register("CustomATD")
 class CustomATD(ATDScorer):
-    def __call__(self, instances) -> float:
-        scores = []
-        for ins in instances.values():
-            delays = self.get_delays(ins)
-            if not delays:
-                continue
-
-            source_boundaries = self.get_source_chunk_end_times(ins)
-            if not source_boundaries:
-                continue
-
-            chunk_sizes = {"src": [], "tgt": []}
-            token_to_chunk = {"src": [], "tgt": [0]}
-            token_to_time = {"src": [], "tgt": [0.0]}
-
-            (
-                chunk_sizes["src"],
-                token_to_chunk["src"],
-                token_to_time["src"],
-            ) = self.build_source_timeline(source_boundaries, token_len_ms=300.0)
-
-            output_type = self.get_output_type(ins)
-            target_chunk_sizes = [0] * (len(source_boundaries) + 1)
-
-            target_delays = []
-            target_chunk_ids = []
-            compute_times = []
-
-            if output_type == "text":
-                alignment_chunk_ids = getattr(ins, "_alignment_output_chunk_ids", None)
-                if alignment_chunk_ids:
-                    output_emit_delays = list(ins.delays)
-                    for delay, output_chunk_id in zip(delays, alignment_chunk_ids):
-                        output_chunk_idx = max(0, min(output_chunk_id - 1, len(output_emit_delays) - 1))
-                        source_chunk_id = self.source_chunk_id_from_delay(
-                            source_boundaries,
-                            output_emit_delays[output_chunk_idx],
-                        )
-                        target_delays.append(float(delay))
-                        target_chunk_ids.append(source_chunk_id)
-                        compute_times.append(0.0)
-                else:
-                    base_emit_delays = list(getattr(ins, "delays", []) or [])
-                    text_compute_times = self.get_incremental_compute_times(ins, len(delays))
-
-                    for idx, delay in enumerate(delays):
-                        emit_delay = base_emit_delays[idx] if idx < len(base_emit_delays) else delay
-                        source_chunk_id = self.source_chunk_id_from_delay(source_boundaries, emit_delay)
-                        target_delays.append(float(delay))
-                        target_chunk_ids.append(source_chunk_id)
-                        extra_compute = 0.0 if self.computation_aware else float(text_compute_times[idx])
-                        compute_times.append(extra_compute)
-            else:
-                speech_compute_times = self.get_incremental_compute_times(ins, len(delays))
-
-                for idx, duration_ms in enumerate(getattr(ins, "durations", []) or []):
-                    source_chunk_id = self.source_chunk_id_from_delay(source_boundaries, ins.delays[idx])
-                    token_lens = self.split_duration_into_tokens(duration_ms, token_len_ms=300.0)
-                    if self.computation_aware:
-                        per_token_compute = 0.0
-                    else:
-                        per_token_compute = float(speech_compute_times[idx]) / len(token_lens) if token_lens else 0.0
-                    for _ in token_lens:
-                        target_delays.append(float(delays[idx]))
-                        target_chunk_ids.append(source_chunk_id)
-                        compute_times.append(per_token_compute)
-
-            if not target_delays:
-                continue
-
-            for chunk_id in target_chunk_ids:
-                target_chunk_sizes[chunk_id] += 1
-                token_to_chunk["tgt"].append(chunk_id)
-
-            chunk_sizes["tgt"] = target_chunk_sizes
-
-            for delay, comp in zip(target_delays, compute_times):
-                prev_tgt = token_to_time["tgt"][-1]
-                start = max(float(delay), prev_tgt)
-                token_to_time["tgt"].append(start + float(comp))
-
-            scores.append(self.compute_algo(chunk_sizes, token_to_chunk, token_to_time))
-
-        return mean(scores) if scores else 0.0
+    add_target_duration = False
 
 
 @register("CustomATD_SpeechAlign")
