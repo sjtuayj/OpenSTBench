@@ -14,7 +14,7 @@ OpenSTBench 是一个面向语音翻译的多维度评测工具包，适用于�
 工具包按三个维度组织评测：
 
 - **翻译质量**：评估译文是否准确表达源语音的语义内容。
-- **语音质量**：评估生成语音的自然度、文本一致性、说话人保持、情感保持，以及非语言或副语言事件保持。
+- **语音质量**：评估生成语音的自然度、文本一致性、说话人保持、情感保持，以及声学事件保持。
 - **时序质量**：评估生成语音是否保持合理的时长结构，并在流式系统中评估响应延迟。
 
 ## 安装
@@ -38,9 +38,11 @@ pip install -e .
 ```bash
 pip install "OpenSTBench[comet]"
 pip install "OpenSTBench[whisper]"
+pip install "OpenSTBench[tokenizer-ja]"  # 日语 BLEU
+pip install "OpenSTBench[tokenizer-ko]"  # 韩语 BLEU
 pip install "OpenSTBench[speech_quality]"
 pip install "OpenSTBench[emotion]"
-pip install "OpenSTBench[paralinguistics]"
+pip install "OpenSTBench[acoustic-events]"
 pip install "OpenSTBench[metricx]"
 pip install "OpenSTBench[all]"
 ```
@@ -69,11 +71,25 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 | 语音质量 | `SpeechQualityEvaluator` | S2ST | `UTMOS`, `WER_Consistency`, `CER_Consistency` |
 | 语音质量 | `SpeakerSimilarityEvaluator` | S2ST | `average_wavlm_large_similarity`, `average_resemblyzer_similarity` |
 | 语音质量 | `EmotionEvaluator` | S2ST | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
-| 语音质量 | `ParalinguisticEvaluator` | S2ST | `Acoustic_Event_Count_F1`, `Acoustic_Event_Localization_F1`, `Acoustic_Event_Onset_Error` |
+| 语音质量 | `AcousticEventEvaluator` / `BEATsStrongEventDetector` | S2ST | `event_content_map` |
 | 时序质量 | `TemporalConsistencyEvaluator` | S2ST | `Duration_Consistency_SLC_0.2`, `Duration_Consistency_SLC_0.4` |
 | 时序质量 | `LatencyEvaluator` | 流式 S2TT/S2ST | `First_Audio_Delay_(StartOffset_ms)`, `Overall_Translation_Delay_(ATD_ms)`, `End_Action_Delay_(CustomATD_ms)`, `Real_Time_Factor_(RTF)` |
 
 离线和流式是系统设置，不是独立的指标维度。请根据系统实际输出选择对应评测器：文本、生成语音、源/目标语音对、事件标注或流式轨迹。
+
+### 声学事件评测
+
+声学事件评测用于判断目标音频是否保留了源音频标注的事件类别，不评测事件发生的时间位置。OpenSTBench 直接使用公开的 `BEATs_strong_1` checkpoint，不需要训练或微调，并计算无人工检测阈值的 clip-based 宏平均 Average Precision（`event_content_map`）。只有在当前评测 cohort 中同时具有正例和负例的类别才进入宏平均。
+
+公共 `AcousticEventEvaluator` 和 `compute_event_content_map` API 直接返回 Content mAP 结果，其中包含整体 `event_content_map`、逐类 AP、正负样本数和类别覆盖率。可运行示例见 [`examples/python/acoustic_event_eval.py`](examples/python/acoustic_event_eval.py)。
+
+`newtest` 流程将结果写入 `metrics_acoustic_events.json`，其中包含两个指标视图和独立的 coverage：
+
+- `metrics.successful_only.event_content_map` 是在成功生成的目标音频上计算的正式指标。
+- `metrics.all_samples_zero_scored.event_content_map` 仅用于诊断；失败目标音频的所有事件类别置信度记为零，然后在完整 cohort 上重新计算 mAP。
+- `coverage` 报告成功率、失败率和失败原因。
+
+运行 `newtest/eval/eval_acoustic_events.py` 时，不传 `--beats_model_path` 会把固定 checkpoint 下载到 OpenSTBench 用户缓存；也可以显式传入 checkpoint 路径。该流程没有训练命令，也没有人工检测阈值。
 
 ## 实验结果概览
 
@@ -91,8 +107,8 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 | LibriTTS-based paired speaker set | 说话人保持 | OpenSTBench 构造的 paired set 已发布在 [Hugging Face Datasets](https://huggingface.co/datasets/ayj111/openstbench-paired-set)；源语料为 [LibriTTS](https://www.openslr.org/60/) |
 | RAVDESS | 情感保持 | 使用 RAVDESS Zenodo 记录中的 [Audio_Speech_Actors_01-24.zip](https://zenodo.org/records/1188976) 压缩包 |
 | MCAE-SPPS | 情感保持 | [MCAE-SPPS on OSF](https://doi.org/10.17605/OSF.IO/9JYZC) |
-| NonverbalTTS test | 副语言/非语言事件保持 | [deepvk/NonverbalTTS](https://huggingface.co/datasets/deepvk/NonverbalTTS) |
-| SynParaSpeech | 副语言/非语言事件保持 | [shawnpi/SynParaSpeech](https://huggingface.co/datasets/shawnpi/SynParaSpeech) |
+| NonverbalTTS test | 声学事件内容 | [deepvk/NonverbalTTS](https://huggingface.co/datasets/deepvk/NonverbalTTS) |
+| SynParaSpeech | 声学事件内容 | [shawnpi/SynParaSpeech](https://huggingface.co/datasets/shawnpi/SynParaSpeech) |
 
 ## 快速开始
 
@@ -125,6 +141,58 @@ ASR 翻译质量评测默认开启，但只有传入 `target_audio` 或预先生
 `TranslationEvaluator(whisper_model="large-v3")` 更换。设置
 `use_asr=False` 可关闭全部 `ASR_` 指标。
 
+需要为不同语言选择不同 ASR 时，可配置语言路由：
+
+```python
+from openstbench import ASRRouter, TranslationEvaluator, WhisperASRBackend
+
+router = ASRRouter({
+    "default": WhisperASRBackend(model="medium"),
+    "ja": WhisperASRBackend(model="large-v3"),
+})
+evaluator = TranslationEvaluator(asr_router=router)
+```
+
+粤语应保留为独立路由 `"yue"`；如果所选 Whisper checkpoint 不支持粤语，
+请配置粤语 `ASRBackend`，或直接提供预计算的 `asr_text`。宗卡语 `"dz"`
+同样使用字符 BLEU/CER，但默认 Whisper 后端需要替换为自定义 ASR，或使用
+`asr_text`。延迟评测需要按语言自动分词时，可使用
+`--target-language ja --latency-unit auto`；不选择 `auto` 时保持原有显式单位行为。
+
+### 多语种快速开始
+
+`target_lang` 是翻译质量和语音文本一致性评测的语言开关。评测日语或韩语
+BLEU 前，安装对应的可选 tokenizer：
+
+```bash
+pip install "OpenSTBench[tokenizer-ja]"  # 日语
+pip install "OpenSTBench[tokenizer-ko]"  # 韩语
+```
+
+```python
+scores = evaluator.evaluate_all(
+    reference=["今日は天気がとても良いです。"],
+    target_text=["今日は天気がとても良いです。"],
+    asr_text=["今日は天気がとても良いです。"],
+    target_lang="ja",
+)
+```
+
+流式延迟评测传入目标语言，并由 `auto` 自动选择单位：
+
+```bash
+python -m openstbench.latency.cli \
+  --source data/source.txt --target data/ref.txt \
+  --task s2t --agent-script my_agent.py --agent-class MyAgent \
+  --target-language ja --latency-unit auto
+```
+
+完整参数参见 [translation_eval.py](examples/python/translation_eval.py)、
+[speech_quality_eval.py](examples/python/speech_quality_eval.py) 和
+[latency_eval.py](examples/python/latency_eval.py)。如果所选 Whisper
+checkpoint 不支持粤语等目标语言，需要配置自定义 `ASRBackend` 或提供预计算
+`asr_text`。
+
 ## 示例
 
 完整参数模板放在 `examples/` 中。README 只保留概览；每个示例文件中都列出了可配置参数、输入格式和输出字段。
@@ -133,8 +201,7 @@ ASR 翻译质量评测默认开启，但只有传入 `target_audio` 或预先生
 - `examples/python/speech_quality_eval.py`
 - `examples/python/speaker_similarity_eval.py`
 - `examples/python/emotion_eval.py`
-- `examples/python/paralinguistic_eval.py`
-- `examples/python/paralinguistic_identity_baseline.py`
+- `examples/python/acoustic_event_eval.py`
 - `examples/python/temporal_consistency_eval.py`
 - `examples/python/latency_eval.py`
 - `examples/bash/install_extras.sh`
@@ -150,7 +217,10 @@ python -m openstbench.latency.cli --help
 
 - 文本输入通常支持 `list[str]`、每行一个样本的 `.txt` 文件，以及对应评测器支持的 `.json` 文件。
 - 音频输入通常支持文件夹、`list[str]`、`.txt` 路径列表，以及对应评测器支持的 `.json` 路径列表。
-- 对 `zh`、`ja`、`ko`，语音文本一致性返回 `CER_Consistency`；其他语言返回 `WER_Consistency`。
+- 对 `zh`、`yue`、`ja`、`ko`、`th`、`lo`、`km`、`my`、`bo`、`dz`，语音文本一致性返回 `CER_Consistency`；使用空格分词的语言返回 `WER_Consistency`。
+- BLEU 保持英语及其他空格语言使用 `13a`、中文使用 `zh` 的现有口径；粤语使用 `zh`，日语使用 `ja-mecab`，韩语使用 `ko-mecab`，上述其他无空格语言使用 `char`。
+- `ASRRouter` 可将不同目标语言路由到不同的 `WhisperASRBackend` checkpoint 或自定义 `ASRBackend`。当 Whisper checkpoint 不支持目标语言时，不会把非法语言码传给模型，而是返回不可用的空转写。
+- 延迟分词新增 `unit="auto"`（CLI：`--latency-unit auto`），并配合目标语言自动选择 word/char；原有显式 `word`、`char` 行为不变。
 - 对接受预训练模型来源的评测器，模型来源采用本地优先规则：如果传入的本地路径存在，则使用本地路径；否则回退到配置的远程模型 id。
 - 可选依赖只会在对应评测器需要时加载。
 - `TranslationEvaluator` 默认启用 MetricX。MetricX 严格遵循 google-research/metricx 官方 README，只使用文本，返回 `[0, 25]` 范围内的错误分数，分数越低越好；如需关闭可设置 `use_metricx=False`。
@@ -163,7 +233,7 @@ python -m openstbench.latency.cli --help
 - 感谢 [sacreBLEU](https://github.com/mjpost/sacrebleu)、[COMET](https://github.com/Unbabel/COMET)、[MetricX](https://github.com/google-research/metricx)，以及 [bleurt-pytorch](https://github.com/lucadiliello/bleurt-pytorch)；其中 bleurt-pytorch 是 [BLEURT](https://github.com/google-research/bleurt) 的 PyTorch 移植版本，用于翻译质量评测
 - 感谢 [Whisper](https://github.com/openai/whisper)、[SpeechMOS/UTMOS](https://github.com/tarepan/SpeechMOS)、[Resemblyzer](https://github.com/resemble-ai/Resemblyzer) 和 [WavLM](https://github.com/microsoft/unilm/tree/master/wavlm)，用于语音质量和说话人相似度评测
 - 感谢 [FunASR](https://github.com/modelscope/FunASR) 和 [Emotion2Vec](https://modelscope.cn/models/iic/emotion2vec_plus_large)，用于情感保持评测
-- 感谢 [CLAP](https://huggingface.co/laion/clap-htsat-fused) 和 [Hugging Face Transformers](https://github.com/huggingface/transformers)，用于副语言事件评测
+- 感谢 [PretrainedSED](https://github.com/fschmid56/PretrainedSED)、BEATs 和 `sed-scores-eval`，用于声学事件评测
 
 ## 引用
 

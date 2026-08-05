@@ -17,15 +17,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import textgrid
 
-from .._model_loading import resolve_pretrained_source
-
-try:
-    import whisper
-except ImportError:
-    whisper = None
+from ..asr_backend import ASRBackend, ASRRouter, WhisperASRBackend
+from ..language_policy import latency_unit as resolve_latency_unit
 
 
-_WHISPER_MODELS = {}
+_WHISPER_BACKENDS = {}
 
 
 def submit_slurm(args, python_script_path):
@@ -90,54 +86,59 @@ class Visualizer:
         plt.close()
 
 
-def tokenize_latency_units(text, unit="word"):
+def tokenize_latency_units(text, unit="word", language=None):
     text = " ".join(str(text or "").strip().split())
     if not text:
         return []
+    if unit == "auto":
+        unit = resolve_latency_unit(language)
     if unit == "char":
         compact = "".join(text.split())
         return [ch for ch in compact if ch.strip()]
     return [part for part in text.split(" ") if part]
 
 
-def _prepare_alignment_transcript(text, unit="word"):
-    units = tokenize_latency_units(text, unit=unit)
+def _prepare_alignment_transcript(text, unit="word", language=None):
+    units = tokenize_latency_units(text, unit=unit, language=language)
     return units, " ".join(units)
 
 
 def _load_whisper_model(model_name="medium", device=None):
-    if whisper is None:
-        return None
     key = (model_name, device or "auto")
-    if key not in _WHISPER_MODELS:
-        resolved_model_name, _source_kind = resolve_pretrained_source(
-            model_name,
-            fallback_source="medium",
+    if key not in _WHISPER_BACKENDS:
+        _WHISPER_BACKENDS[key] = WhisperASRBackend(
+            model=model_name,
+            device=device,
+            fallback_model="medium",
+            fp16=bool(device and "cuda" in device),
         )
-        kwargs = {}
-        if device:
-            kwargs["device"] = device
-        _WHISPER_MODELS[key] = whisper.load_model(resolved_model_name, **kwargs)
-    return _WHISPER_MODELS[key]
+    return _WHISPER_BACKENDS[key].load_model()
 
 
-def transcribe_audio_with_whisper(audio_paths, model_name="medium", device=None):
-    model = _load_whisper_model(model_name=model_name, device=device)
-    if model is None:
+def transcribe_audio_with_whisper(
+    audio_paths,
+    model_name="medium",
+    device=None,
+    language=None,
+    asr_backend: ASRBackend = None,
+    asr_router: ASRRouter = None,
+):
+    if asr_backend is not None and asr_router is not None:
+        raise ValueError("asr_backend and asr_router are mutually exclusive")
+    backend = asr_router.resolve(language) if asr_router is not None else asr_backend
+    if backend is None:
+        key = (model_name, device or "auto")
+        if key not in _WHISPER_BACKENDS:
+            _WHISPER_BACKENDS[key] = WhisperASRBackend(
+                model=model_name,
+                device=device,
+                fallback_model="medium",
+                fp16=bool(device and "cuda" in device),
+            )
+        backend = _WHISPER_BACKENDS[key]
+    if backend is None:
         return [""] * len(audio_paths)
-
-    results = []
-    use_fp16 = False
-    if device:
-        use_fp16 = "cuda" in device
-
-    for path in audio_paths:
-        try:
-            res = model.transcribe(path, fp16=use_fp16)
-            results.append(str(res.get("text", "")).strip())
-        except Exception:
-            results.append("")
-    return results
+    return backend.transcribe(audio_paths, language=language)
 
 
 def materialize_s2s_alignment_artifacts(
@@ -147,6 +148,9 @@ def materialize_s2s_alignment_artifacts(
     asr_fallback=False,
     asr_model="medium",
     asr_device=None,
+    target_language=None,
+    asr_backend=None,
+    asr_router=None,
 ):
     wav_dir = Path(output_dir) / "wavs"
     wav_dir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +165,11 @@ def materialize_s2s_alignment_artifacts(
         transcript_source = getattr(ins, "prediction_text_source", "none")
 
         if transcript:
-            units, align_text = _prepare_alignment_transcript(transcript, unit=unit)
+            units, align_text = _prepare_alignment_transcript(
+                transcript,
+                unit=unit,
+                language=target_language,
+            )
             ins.target_units = units
             ins.alignment_mode = transcript_source
             if units:
@@ -184,6 +192,9 @@ def materialize_s2s_alignment_artifacts(
             wav_paths,
             model_name=asr_model,
             device=asr_device,
+            language=target_language,
+            asr_backend=asr_backend,
+            asr_router=asr_router,
         )
         for (ins, wav_path), transcript in zip(pending_asr, transcripts):
             txt_path = wav_path.with_suffix(".txt")
@@ -199,7 +210,11 @@ def materialize_s2s_alignment_artifacts(
             ins.prediction_text_source = "asr_fallback"
             ins.alignment_mode = "asr_fallback"
 
-            units, align_text = _prepare_alignment_transcript(transcript, unit=unit)
+            units, align_text = _prepare_alignment_transcript(
+                transcript,
+                unit=unit,
+                language=target_language,
+            )
             ins.target_units = units
             if units:
                 txt_path.write_text(align_text, encoding="utf-8")

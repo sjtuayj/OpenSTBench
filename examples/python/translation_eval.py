@@ -1,4 +1,4 @@
-from openstbench import TranslationEvaluator
+from openstbench import ASRBackend, ASRRouter, TranslationEvaluator, WhisperASRBackend
 
 
 """
@@ -14,7 +14,10 @@ Candidate inputs (at least one evaluation path is required):
 Optional evaluation inputs:
 - reference: reference translations as list[str], .txt, or .json.
 - source: source text, required for COMET, COMETKiwi, and MetricX_QE.
-- target_lang: target language code used to choose the BLEU tokenizer.
+- target_lang: target language code used to choose the BLEU tokenizer and the
+  ASR route. English/other space-delimited languages use 13a, Chinese and
+  Cantonese use zh, Japanese uses ja-mecab, Korean uses ko-mecab, and the
+  configured non-space languages use char.
 
 Configurable evaluator parameters:
 - use_bleu: compute sacreBLEU.
@@ -26,6 +29,8 @@ Configurable evaluator parameters:
   enabled by default.
 - whisper_model: Whisper model name or local path; defaults to "medium".
 - whisper_language: optional language override; defaults to target_lang.
+- asr_backend: one custom ASR backend used for every language.
+- asr_router: route normalized language codes to different ASR backends.
 - asr_cache_path: optional JSONL cache for successful ASR transcripts.
 - comet_model: local path or remote model id.
 - bleurt_path: local BLEURT checkpoint path.
@@ -50,7 +55,26 @@ Output metrics:
 MetricX follows the official google-research/metricx README and scores text.
 ASR_MetricX first converts target audio to text, then applies the same MetricX
 scorer; MetricX itself never consumes raw audio.
+
+Install Japanese/Korean BLEU tokenizers only when needed:
+  pip install "OpenSTBench[tokenizer-ja]"
+  pip install "OpenSTBench[tokenizer-ko]"
+
+Providing asr_text bypasses Whisper completely. A custom backend must implement
+ASRBackend.transcribe(audio_paths, language=None). Keep Cantonese on the
+independent "yue" route instead of mapping it to "zh".
 """ 
+
+
+def build_asr_router(cantonese_backend: ASRBackend = None) -> ASRRouter:
+    routes = {
+        "default": WhisperASRBackend(model="medium"),
+        "ja": WhisperASRBackend(model="large-v3"),
+    }
+    if cantonese_backend is not None:
+        # Example: build_asr_router(YourCantoneseASRBackend(...))
+        routes["yue"] = cantonese_backend
+    return ASRRouter(routes)
 
 
 def main():
@@ -73,6 +97,7 @@ def main():
         whisper_model="medium",
         whisper_language=None,
         asr_cache_path="./asr_transcripts_whisper_medium.jsonl",
+        asr_router=build_asr_router(),
     )
 
     results = evaluator.evaluate_all(
@@ -86,6 +111,18 @@ def main():
     )
 
     print(results)
+
+    # Japanese uses ja-mecab for BLEU and CER for speech consistency. Because
+    # this call supplies asr_text, neither the default nor Japanese Whisper
+    # checkpoint is loaded.
+    japanese_results = evaluator.evaluate_all(
+        reference=["今日は天気がとても良いです。"],
+        target_text=["今日は天気がとても良いです。"],
+        source=["The weather is very nice today."],
+        target_lang="ja",
+        asr_text=["今日は天気がとても良いです。"],
+    )
+    print(japanese_results)
 
 
 if __name__ == "__main__":

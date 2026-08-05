@@ -13,7 +13,9 @@
 # - --task: s2t or s2s.
 # - --segment-size: source chunk duration in milliseconds.
 # - --poll-interval-ms: streaming loop polling interval in milliseconds.
-# - --latency-unit: word or char.
+# - --target-language: target language used by auto tokenization and S2S ASR.
+# - --latency-unit: auto, word, or char. Auto selects from target language;
+#   explicit word/char preserve the historical behavior.
 # - --disable-asr-fallback: disable Whisper fallback for S2S transcript
 #   materialization.
 # - --asr-model: Whisper model name/path for S2S fallback transcripts.
@@ -22,8 +24,9 @@
 # - --computation-aware: also compute latency with recorded model time removed.
 # - --slurm: submit the same command through the helper in latency.utils.
 #
-# For S2S alignment, replace the MFA model names below with the target-language
-# acoustic and dictionary models that match your dataset.
+# MFA models are not selected automatically. For S2S alignment, replace the
+# model names below with acoustic and dictionary models matching the target
+# language.
 python -m openstbench.latency.cli \
   --source data/source.txt \
   --target data/ref.txt \
@@ -33,8 +36,9 @@ python -m openstbench.latency.cli \
   --agent-class MyAgent \
   --segment-size 20 \
   --poll-interval-ms 10 \
-  --latency-unit char \
+  --target-language ja \
+  --latency-unit auto \
   --asr-model medium \
-  --alignment-acoustic-model mandarin_mfa \
-  --alignment-dictionary-model mandarin_mfa \
+  --alignment-acoustic-model english_mfa \
+  --alignment-dictionary-model english_mfa \
   --computation-aware

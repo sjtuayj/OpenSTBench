@@ -1,6 +1,5 @@
 import gc
 import hashlib
-import importlib
 import json
 import os
 from pathlib import Path
@@ -9,10 +8,14 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import sacrebleu
 import torch
-from tqdm import tqdm
 
 from ._model_loading import resolve_pretrained_source
-from .language_policy import whisper_language_code
+from .asr_backend import ASRBackend, ASRRouter, WhisperASRBackend
+from .language_policy import (
+    bleu_tokenizer_install_hint,
+    bleu_tokenizer_name,
+    whisper_language_code,
+)
 from .metricx_evaluator import (
     DEFAULT_METRICX_TOKENIZER,
     DEFAULT_METRICX_VERSION,
@@ -164,6 +167,8 @@ class TranslationEvaluator:
         whisper_model: str = DEFAULT_WHISPER_MODEL,
         whisper_language: Optional[str] = None,
         asr_cache_path: Optional[str] = None,
+        asr_backend: Optional[ASRBackend] = None,
+        asr_router: Optional[ASRRouter] = None,
     ):
 
         self.use_bleu = use_bleu
@@ -200,6 +205,16 @@ class TranslationEvaluator:
         self.whisper_model = None
         self._whisper_load_failed = False
         self.asr_cache_path = asr_cache_path
+        if asr_backend is not None and asr_router is not None:
+            raise ValueError("asr_backend and asr_router are mutually exclusive")
+        self._whisper_backend = WhisperASRBackend(
+            model=whisper_model,
+            language=whisper_language,
+            device=self.device,
+            fallback_model=DEFAULT_WHISPER_MODEL,
+        )
+        self.asr_backend = asr_backend or self._whisper_backend
+        self.asr_router = asr_router
 
         self.bleurt_model = None
         self.bleurt_tokenizer = None
@@ -219,6 +234,10 @@ class TranslationEvaluator:
         metricx_scorer = getattr(self, "metricx_scorer", None)
         if metricx_scorer is not None:
             metricx_scorer.cleanup()
+        if self.asr_router is not None:
+            self.asr_router.cleanup()
+        elif self.asr_backend is not None:
+            self.asr_backend.cleanup()
         for attr in [
             "comet",
             "comet_qe",
@@ -314,50 +333,42 @@ class TranslationEvaluator:
 
     def _load_whisper(self):
         if self.whisper_model is not None:
-            return self.whisper_model
-        if self._whisper_load_failed:
-            return None
-
-        try:
-            whisper = importlib.import_module("whisper")
-            model_source, source_kind = resolve_pretrained_source(
-                self.whisper_model_name,
-                fallback_source=DEFAULT_WHISPER_MODEL,
-            )
-            print(f"Loading Whisper ({source_kind}) from {model_source}...")
-            self.whisper_model = whisper.load_model(model_source, device=self.device)
-        except Exception as e:
-            self._whisper_load_failed = True
-            print(f"Whisper loading failed: {e}")
-            return None
+            self._whisper_backend.model = self.whisper_model
+        self.whisper_model = self._whisper_backend.load_model()
+        self._whisper_load_failed = self._whisper_backend.load_failed
         return self.whisper_model
 
+    def _select_asr_backend(self, target_lang: str) -> Optional[ASRBackend]:
+        if self.asr_router is not None:
+            return self.asr_router.resolve(target_lang)
+        return self.asr_backend
+
     def _transcribe_audio(self, audio_paths: List[str], target_lang: str) -> List[str]:
-        model = self._load_whisper()
-        if model is None:
+        backend = self._select_asr_backend(target_lang)
+        if backend is None:
+            print(f"No ASR backend is configured for language '{target_lang}'.")
             return [""] * len(audio_paths)
 
-        transcribe_kwargs = {
-            "fp16": torch.cuda.is_available() and self.device.startswith("cuda"),
-            "task": "transcribe",
-        }
-        language = self.whisper_language or whisper_language_code(target_lang)
-        if language:
-            transcribe_kwargs["language"] = language
+        if backend is self._whisper_backend and self.whisper_model is not None:
+            self._whisper_backend.model = self.whisper_model
 
-        transcripts = []
-        for audio_path in tqdm(audio_paths, desc=f"Whisper ASR ({self.whisper_model_name})"):
+        transcripts = [""] * len(audio_paths)
+        valid_indices = []
+        valid_paths = []
+        for index, audio_path in enumerate(audio_paths):
             path = Path(audio_path)
             if not path.exists() or not path.is_file():
                 print(f"ASR skipped missing audio file: {audio_path}")
-                transcripts.append("")
                 continue
-            try:
-                result = model.transcribe(str(path), **transcribe_kwargs)
-                transcripts.append(str(result.get("text") or "").strip())
-            except Exception as e:
-                print(f"ASR transcription failed for {audio_path}: {e}")
-                transcripts.append("")
+            valid_indices.append(index)
+            valid_paths.append(str(path))
+
+        decoded = backend.transcribe(valid_paths, language=target_lang)
+        for index, text in zip(valid_indices, decoded):
+            transcripts[index] = str(text or "").strip()
+        if backend is self._whisper_backend:
+            self.whisper_model = self._whisper_backend.model
+            self._whisper_load_failed = self._whisper_backend.load_failed
         return transcripts
 
     @staticmethod
@@ -373,12 +384,16 @@ class TranslationEvaluator:
 
     @staticmethod
     def _asr_cache_key(record: dict) -> tuple:
+        backend_identity = str(record.get("asr_backend") or "")
+        if not backend_identity and record.get("whisper_model"):
+            backend_identity = f"whisper:{record.get('whisper_model')}"
         return (
             str(record.get("sample_id") or ""),
             str(record.get("predicted_audio") or "").replace("\\", "/"),
             str(record.get("predicted_audio_sha256") or ""),
             str(record.get("whisper_model") or ""),
             str(record.get("whisper_language") or ""),
+            backend_identity,
         )
 
     def _read_asr_cache(self) -> List[dict]:
@@ -438,7 +453,11 @@ class TranslationEvaluator:
         if not self.asr_cache_path:
             return self._transcribe_audio(audio_paths, target_lang)
 
-        effective_language = self.whisper_language or whisper_language_code(target_lang) or ""
+        backend = self._select_asr_backend(target_lang)
+        backend_identity = str(getattr(backend, "cache_identity", "custom"))
+        backend_model = str(getattr(backend, "model_name", self.whisper_model_name))
+        forced_language = getattr(backend, "language", None)
+        effective_language = forced_language or whisper_language_code(target_lang) or ""
         normalized_sample_ids = sample_ids or [""] * len(audio_paths)
         input_records = [
             {
@@ -447,6 +466,8 @@ class TranslationEvaluator:
                 "predicted_audio_sha256": self._audio_sha256(audio_path),
                 "whisper_model": self.whisper_model_name,
                 "whisper_language": effective_language,
+                "asr_backend": backend_identity,
+                "asr_model": backend_model,
             }
             for sample_id, audio_path in zip(normalized_sample_ids, audio_paths)
         ]
@@ -519,14 +540,15 @@ class TranslationEvaluator:
         return [target_audio]
 
     def _get_bleu_tokenizer_name(self, lang: str) -> str:
-        if lang == "zh":
-            return "zh"
-        elif lang == "ja":
-            return "ja-mecab"
-        elif lang == "ko":
-            return "ko-mecab"
-        else:
-            return "13a"
+        return bleu_tokenizer_name(lang)
+
+    @staticmethod
+    def _report_bleu_tokenizer_failure(tokenizer_name: str, exc: Exception) -> None:
+        hint = bleu_tokenizer_install_hint(tokenizer_name)
+        message = f"sacreBLEU tokenizer '{tokenizer_name}' failed: {exc}"
+        if hint:
+            message += f". Install its optional dependency with: {hint}"
+        print(message)
 
     def _compute_bleurt_score(self, references: List[str], candidates: List[str]) -> float:
         all_scores = []
@@ -587,7 +609,8 @@ class TranslationEvaluator:
                     [reference],
                     tokenize=tokenizer_name,
                 ).score
-            except Exception:
+            except Exception as exc:
+                self._report_bleu_tokenizer_failure(tokenizer_name, exc)
                 results["ASR_sacreBLEU"] = -1.0
 
         if self.use_chrf and reference is not None:
@@ -820,7 +843,8 @@ class TranslationEvaluator:
             tokenizer_name = self._get_bleu_tokenizer_name(target_lang)
             try:
                 results["sacreBLEU"] = sacrebleu.corpus_bleu(final_text, [final_ref], tokenize=tokenizer_name).score
-            except Exception:
+            except Exception as exc:
+                self._report_bleu_tokenizer_failure(tokenizer_name, exc)
                 results["sacreBLEU"] = -1.0
 
         # 2. chrF++

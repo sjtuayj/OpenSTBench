@@ -20,6 +20,7 @@ from .agent import GenericAgent
 from .instance import SpeechToSpeechInstance, SpeechToTextInstance
 from .metrics import SCORERS
 from .utils import Visualizer, materialize_s2s_alignment_artifacts, submit_slurm
+from ..asr_backend import ASRBackend, ASRRouter
 from ..translation_evaluator import TranslationEvaluator
 
 
@@ -37,6 +38,9 @@ class LatencyEvaluator:
         asr_device=None,
         alignment_acoustic_model="english_mfa",
         alignment_dictionary_model="english_mfa",
+        target_language=None,
+        asr_backend: ASRBackend = None,
+        asr_router: ASRRouter = None,
     ):
         self.agent = agent
         self.segment_size = segment_size
@@ -46,6 +50,11 @@ class LatencyEvaluator:
         self.asr_fallback_for_s2s_alignment = asr_fallback_for_s2s_alignment
         self.asr_model = asr_model
         self.asr_device = asr_device
+        self.target_language = target_language
+        if asr_backend is not None and asr_router is not None:
+            raise ValueError("asr_backend and asr_router are mutually exclusive")
+        self.asr_backend = asr_backend
+        self.asr_router = asr_router
         self.alignment_acoustic_model = alignment_acoustic_model
         self.alignment_dictionary_model = alignment_dictionary_model
 
@@ -59,9 +68,23 @@ class LatencyEvaluator:
         print(f"Running Latency Evaluation ({task}, {len(source_files)} samples)...")
         for i, (src, ref) in tqdm(enumerate(zip(source_files, ref_files)), total=len(source_files)):
             if task == "s2t":
-                ins = SpeechToTextInstance(i, src, ref, output_dir)
+                ins = SpeechToTextInstance(
+                    i,
+                    src,
+                    ref,
+                    output_dir,
+                    latency_unit=self.latency_unit,
+                    target_language=self.target_language,
+                )
             else:
-                ins = SpeechToSpeechInstance(i, src, ref, output_dir)
+                ins = SpeechToSpeechInstance(
+                    i,
+                    src,
+                    ref,
+                    output_dir,
+                    latency_unit=self.latency_unit,
+                    target_language=self.target_language,
+                )
 
             self.agent.reset()
             sample_wall_start = time.perf_counter()
@@ -118,6 +141,9 @@ class LatencyEvaluator:
             asr_fallback=self.asr_fallback_for_s2s_alignment,
             asr_model=self.asr_model,
             asr_device=self.asr_device,
+            target_language=self.target_language,
+            asr_backend=self.asr_backend,
+            asr_router=self.asr_router,
         )
 
     def compute_latency(self, computation_aware=False, output_dir="./output", show_all_metrics=False):
@@ -193,7 +219,8 @@ def main():
     parser.add_argument("--agent-class", required=True, help="Name of the Agent class")
     parser.add_argument("--segment-size", type=int, default=20)
     parser.add_argument("--poll-interval-ms", type=float, default=10.0)
-    parser.add_argument("--latency-unit", choices=["word", "char"], default="word")
+    parser.add_argument("--latency-unit", choices=["word", "char", "auto"], default="word")
+    parser.add_argument("--target-language", default=None)
     parser.add_argument("--disable-asr-fallback", action="store_true")
     parser.add_argument("--asr-model", default="medium")
     parser.add_argument("--alignment-acoustic-model", default="english_mfa")
@@ -206,11 +233,11 @@ def main():
     if args.slurm:
         submit_slurm(args, __file__)
 
-    with open(args.source) as f:
+    with open(args.source, encoding="utf-8") as f:
         src = [l.strip() for l in f if l.strip()]
     ref = [None] * len(src)
     if args.target:
-        with open(args.target) as f:
+        with open(args.target, encoding="utf-8") as f:
             ref = [l.strip() for l in f if l.strip()]
 
     AgentClass = load_agent_from_file(args.agent_script, args.agent_class)
@@ -223,6 +250,7 @@ def main():
         latency_unit=args.latency_unit,
         asr_fallback_for_s2s_alignment=not args.disable_asr_fallback,
         asr_model=args.asr_model,
+        target_language=args.target_language,
         alignment_acoustic_model=args.alignment_acoustic_model,
         alignment_dictionary_model=args.alignment_dictionary_model,
     )
@@ -245,26 +273,31 @@ def main():
                 use_bleu=True,
                 use_chrf=False,
                 use_comet=False,
-                use_whisper=False,
+                use_bleurt=False,
+                use_metricx=False,
+                use_asr=False,
             )
             q_res = qual_eval.evaluate_all(
                 target_text=predictions,
                 reference=ref,
-                source=src,
+                target_lang=args.target_language or "en",
             )
             print(q_res)
 
         elif args.task == "s2s":
             speech_eval = TranslationEvaluator(
-                use_wer=True,
-                use_whisper=True,
+                use_bleu=True,
+                use_chrf=False,
+                use_comet=False,
+                use_bleurt=False,
+                use_metricx=False,
+                use_asr=True,
                 whisper_model="tiny",
-                use_utmos=False,
             )
             s_res = speech_eval.evaluate_all(
-                target_speech=predictions,
+                target_audio=predictions,
                 reference=ref,
-                source=src,
+                target_lang=args.target_language or "en",
             )
             print(s_res)
 

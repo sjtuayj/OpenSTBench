@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "OpenSTBench"
-version = "1.2.6"  
+version = "1.3.0"
 description = "Unified multidimensional evaluation toolkit for S2TT and S2ST systems in offline and streaming speech translation settings"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.9,<3.11"
@@ -17,7 +17,7 @@ keywords = [
     "translation", "evaluation", "BLEU", "COMET", "BLEURT", "MetricX",
     "speech-translation", "S2TT", "S2ST", "streaming", "latency",
     "temporal-consistency", "UTMOS", "WER", "speaker-preservation",
-    "emotion", "paralinguistics", "CLAP", "audio-events"
+    "emotion", "acoustic-events", "BEATs", "audio-events"
 ]
 
 classifiers = [
@@ -54,9 +54,11 @@ Documentation = "https://github.com/sjtuayj/OpenSTBench#readme"
 [project.optional-dependencies]
 comet = ["unbabel-comet>=2.2.2"]
 whisper = ["openai-whisper"]
+tokenizer-ja = ["sacrebleu[ja]>=2.0.0"]
+tokenizer-ko = ["sacrebleu[ko]>=2.0.0"]
 speech_quality = ["jiwer", "opencc-python-reimplemented"]
 emotion = ["funasr", "modelscope"]  
-paralinguistics = ["transformers"]
+acoustic-events = ["sed-scores-eval==0.0.4"]
 metricx = [
     "transformers[torch]==4.30.2",
     "sentencepiece==0.1.99",
@@ -67,10 +69,12 @@ metricx = [
 all = [
     "unbabel-comet>=2.2.2",
     "openai-whisper",
+    "sacrebleu[ja,ko]>=2.0.0",
     "jiwer",
     "opencc-python-reimplemented",
     "funasr",
     "modelscope",
+    "sed-scores-eval==0.0.4",
     "transformers[torch]==4.30.2",
     "sentencepiece==0.1.99",
     "datasets==2.13.1",
@@ -84,3 +88,6 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["openstbench*"]
+
+[tool.setuptools.package-data]
+"openstbench._vendor.pretrained_sed" = ["LICENSE.*"]

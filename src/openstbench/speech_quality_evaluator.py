@@ -2,23 +2,17 @@ import os
 import torch
 import torchaudio
 import jiwer
-from pathlib import Path
 from typing import List, Dict, Optional, Union
 from tqdm import tqdm
 
 # Reuse existing loading utilities
-from ._model_loading import resolve_pretrained_source
+from .asr_backend import ASRBackend, ASRRouter, WhisperASRBackend
 from .language_policy import normalize_language_code, speech_consistency_unit, whisper_language_code
 from .translation_evaluator import (
     load_asr_text_from_file_or_list,
     load_audio_from_folder,
     load_text_from_file_or_list,
 )
-
-try:
-    import whisper
-except ImportError:
-    whisper = None
 
 try:
     from opencc import OpenCC
@@ -40,7 +34,9 @@ class SpeechQualityEvaluator:
                  whisper_language: Optional[str] = None,
                  utmos_model_path: Optional[str] = None,
                  utmos_ckpt_path: Optional[str] = None,
-                 device: Optional[str] = None):
+                 device: Optional[str] = None,
+                 asr_backend: Optional[ASRBackend] = None,
+                 asr_router: Optional[ASRRouter] = None):
         
         self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
         self.use_wer = use_wer
@@ -55,6 +51,17 @@ class SpeechQualityEvaluator:
         
         self.whisper_model = None
         self.utmos_model = None
+        if asr_backend is not None and asr_router is not None:
+            raise ValueError("asr_backend and asr_router are mutually exclusive")
+        self._whisper_backend = WhisperASRBackend(
+            model=whisper_model,
+            language=whisper_language,
+            device=self.device,
+            fallback_model=self.DEFAULT_WHISPER_MODEL,
+        )
+        self.asr_backend = asr_backend or self._whisper_backend
+        self.asr_router = asr_router
+        self._custom_asr = asr_backend is not None or asr_router is not None
         
         if self.use_wer:
             self.wer_transform = jiwer.Compose([
@@ -70,18 +77,13 @@ class SpeechQualityEvaluator:
         return whisper_language_code(language)
 
     def _load_whisper(self):
+        if self.whisper_model is not None:
+            self._whisper_backend.model = self.whisper_model
         if self.whisper_model is None and self.use_wer:
-            if not whisper:
-                print("⚠️ Whisper is not installed, skipping load.")
+            self.whisper_model = self._whisper_backend.load_model()
+            if self.whisper_model is None:
+                print("Whisper is not installed or failed to load, skipping ASR consistency.")
                 self.use_wer = False
-                return
-            print(f"⏳ Loading Whisper ({self.whisper_model_name})...")
-            model_source, source_kind = resolve_pretrained_source(
-                self.whisper_model_name,
-                fallback_source=self.DEFAULT_WHISPER_MODEL,
-            )
-            print(f"Loading Whisper ({source_kind}) from {model_source}...")
-            self.whisper_model = whisper.load_model(model_source, device=self.device)
 
     def _load_utmos(self):
         if self.utmos_model is None and self.use_utmos:
@@ -107,22 +109,23 @@ class SpeechQualityEvaluator:
                 print(f"⚠️ UTMOS model failed to load: {e}")
                 self.use_utmos = False
 
-    def _transcribe(self, audio_paths: List[str]) -> List[str]:
-        self._load_whisper()
-        if not self.whisper_model:
+    def _transcribe(self, audio_paths: List[str], target_lang: Optional[str] = None) -> List[str]:
+        if self.asr_router is not None:
+            backend = self.asr_router.resolve(target_lang)
+        else:
+            backend = self.asr_backend
+        if backend is None:
+            print(f"No ASR backend is configured for language '{target_lang or ''}'.")
             return [""] * len(audio_paths)
 
-        transcribe_kwargs = {
-            "fp16": torch.cuda.is_available() and "cuda" in self.device,
-            "task": "transcribe",
-        }
-        if self.whisper_language:
-            transcribe_kwargs["language"] = self.whisper_language
-
-        results = []
-        for path in tqdm(audio_paths, desc="Whisper transcription"):
-            res = self.whisper_model.transcribe(path, **transcribe_kwargs)
-            results.append(res["text"].strip())
+        if backend is self._whisper_backend and self.whisper_model is not None:
+            self._whisper_backend.model = self.whisper_model
+        # Preserve legacy behavior: the default SpeechQuality Whisper path
+        # still auto-detects when whisper_language was not provided.
+        decode_language = target_lang if self._custom_asr else None
+        results = backend.transcribe(audio_paths, language=decode_language)
+        if backend is self._whisper_backend:
+            self.whisper_model = self._whisper_backend.model
         return results
 
     def _compute_utmos(self, audio_paths: List[str]) -> float:
@@ -206,7 +209,10 @@ class SpeechQualityEvaluator:
                     print("   ➤ Using precomputed ASR text for consistency calculation...")
                 else:
                     print("   ➤ Transcribing audio, preparing consistency calculation...")
-                    asr_texts = self._transcribe(audio_paths)
+                    if self._custom_asr:
+                        asr_texts = self._transcribe(audio_paths, target_lang)
+                    else:
+                        asr_texts = self._transcribe(audio_paths)
                 
                 clean_refs = [self._preprocess_for_wer(t, target_lang) for t in texts]
                 clean_hyps = [self._preprocess_for_wer(t, target_lang) for t in asr_texts]

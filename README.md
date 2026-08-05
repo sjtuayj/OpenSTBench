@@ -14,7 +14,7 @@ OpenSTBench is a multidimensional evaluation toolkit for speech translation. It 
 The toolkit organizes evaluation into three dimensions:
 
 - **Translation Quality**: whether the translated text preserves the source meaning.
-- **Speech Quality**: whether generated speech is natural, text-consistent, speaker-preserving, emotion-preserving, and faithful to non-verbal or paralinguistic events.
+- **Speech Quality**: whether generated speech is natural, text-consistent, speaker-preserving, emotion-preserving, and faithful to acoustic events.
 - **Temporal Quality**: whether generated speech preserves duration structure and, for streaming systems, whether output is responsive.
 
 ## Installation
@@ -38,9 +38,11 @@ Optional extras:
 ```bash
 pip install "OpenSTBench[comet]"
 pip install "OpenSTBench[whisper]"
+pip install "OpenSTBench[tokenizer-ja]"  # Japanese BLEU
+pip install "OpenSTBench[tokenizer-ko]"  # Korean BLEU
 pip install "OpenSTBench[speech_quality]"
 pip install "OpenSTBench[emotion]"
-pip install "OpenSTBench[paralinguistics]"
+pip install "OpenSTBench[acoustic-events]"
 pip install "OpenSTBench[metricx]"
 pip install "OpenSTBench[all]"
 ```
@@ -69,15 +71,29 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 | Speech Quality | `SpeechQualityEvaluator` | S2ST | `UTMOS`, `WER_Consistency`, `CER_Consistency` |
 | Speech Quality | `SpeakerSimilarityEvaluator` | S2ST | `average_wavlm_large_similarity`, `average_resemblyzer_similarity` |
 | Speech Quality | `EmotionEvaluator` | S2ST | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
-| Speech Quality | `ParalinguisticEvaluator` | S2ST | `Acoustic_Event_Count_F1`, `Acoustic_Event_Localization_F1`, `Acoustic_Event_Onset_Error` |
+| Speech Quality | `AcousticEventEvaluator` / `BEATsStrongEventDetector` | S2ST | `event_content_map` |
 | Temporal Quality | `TemporalConsistencyEvaluator` | S2ST | `Duration_Consistency_SLC_0.2`, `Duration_Consistency_SLC_0.4` |
 | Temporal Quality | `LatencyEvaluator` | Streaming S2TT/S2ST | `First_Audio_Delay_(StartOffset_ms)`, `Overall_Translation_Delay_(ATD_ms)`, `End_Action_Delay_(CustomATD_ms)`, `Real_Time_Factor_(RTF)` |
 
 Offline and streaming are supported system settings, not separate metric dimensions. Use the evaluators that match the available outputs: text, generated speech, source/target audio pairs, event annotations, or streaming traces.
 
+### Acoustic-event evaluation
+
+Acoustic-event evaluation measures whether the target audio preserves the annotated event categories from the source audio. It does not evaluate when an event occurs. OpenSTBench runs the published `BEATs_strong_1` checkpoint without training or fine-tuning and computes threshold-free, clip-based macro Average Precision (`event_content_map`). Classes enter the macro average only when the evaluated cohort contains both positive and negative clips.
+
+The public `AcousticEventEvaluator` and `compute_event_content_map` APIs return a Content mAP result directly, including the overall `event_content_map`, per-class AP, positive/negative counts, and class coverage. See [`examples/python/acoustic_event_eval.py`](examples/python/acoustic_event_eval.py) for a runnable example.
+
+The `newtest` workflow writes `metrics_acoustic_events.json` with two metric views and separate coverage:
+
+- `metrics.successful_only.event_content_map` is the official score over successfully generated target audio.
+- `metrics.all_samples_zero_scored.event_content_map` is diagnostic only; failed target audio receives zero confidence for every event class before mAP is recomputed on the complete cohort.
+- `coverage` reports the success rate, failure rate, and failure reasons.
+
+Omit `--beats_model_path` in `newtest/eval/eval_acoustic_events.py` to download the fixed checkpoint into the OpenSTBench user cache, or provide an explicit checkpoint path. There is no training command or manual detection threshold.
+
 ## Experimental Overview
 
-The radar plot below illustrates the multidimensional view produced by OpenSTBench for representative streaming and offline speech translation systems. It summarizes how systems can differ across translation quality, speech quality, and temporal quality: a system with strong translation quality may still show different behavior in speech realization, speaker or emotion preservation, paralinguistic fidelity, temporal consistency, and latency or efficiency.
+The radar plot below illustrates the multidimensional view produced by OpenSTBench for representative streaming and offline speech translation systems. It summarizes how systems can differ across translation quality, speech quality, and temporal quality: a system with strong translation quality may still show different behavior in speech realization, speaker or emotion preservation, acoustic-event fidelity, temporal consistency, and latency or efficiency.
 
 ![OpenSTBench experimental radar overview](./radar.png)
 
@@ -91,8 +107,8 @@ The paper uses the following datasets. Please follow the license and access term
 | LibriTTS-based paired speaker set | Speaker preservation | The constructed OpenSTBench paired set is available on [Hugging Face Datasets](https://huggingface.co/datasets/ayj111/openstbench-paired-set); the source corpus is [LibriTTS](https://www.openslr.org/60/) |
 | RAVDESS | Emotion preservation | [Audio_Speech_Actors_01-24.zip](https://zenodo.org/records/1188976) from the RAVDESS Zenodo record |
 | MCAE-SPPS | Emotion preservation | [MCAE-SPPS on OSF](https://doi.org/10.17605/OSF.IO/9JYZC) |
-| NonverbalTTS test | Paralinguistic fidelity | [deepvk/NonverbalTTS](https://huggingface.co/datasets/deepvk/NonverbalTTS) |
-| SynParaSpeech | Paralinguistic fidelity | [shawnpi/SynParaSpeech](https://huggingface.co/datasets/shawnpi/SynParaSpeech) |
+| NonverbalTTS test | Acoustic-event content | [deepvk/NonverbalTTS](https://huggingface.co/datasets/deepvk/NonverbalTTS) |
+| SynParaSpeech | Acoustic-event content | [shawnpi/SynParaSpeech](https://huggingface.co/datasets/shawnpi/SynParaSpeech) |
 
 ## Quick Start
 
@@ -126,6 +142,62 @@ speech directly, pass a file, a list of files, or a directory as
 `TranslationEvaluator(whisper_model="large-v3")`. Set `use_asr=False` to
 disable every `ASR_` metric.
 
+Route languages to different ASR models when needed:
+
+```python
+from openstbench import ASRRouter, TranslationEvaluator, WhisperASRBackend
+
+router = ASRRouter({
+    "default": WhisperASRBackend(model="medium"),
+    "ja": WhisperASRBackend(model="large-v3"),
+})
+evaluator = TranslationEvaluator(asr_router=router)
+```
+
+Keep Cantonese as the independent route `"yue"`; if the selected Whisper
+checkpoint does not support it, configure a Cantonese `ASRBackend` or provide
+precomputed `asr_text`. Dzongkha (`"dz"`) likewise uses character BLEU/CER but
+requires a custom ASR backend or `asr_text` with the default Whisper backend.
+For language-aware latency tokenization, use
+`--target-language ja --latency-unit auto`; omitting `auto` preserves the
+existing explicit unit behavior.
+
+### Multilingual quick start
+
+`target_lang` is the language switch for translation quality and speech
+consistency. Install the optional tokenizer before evaluating Japanese or
+Korean BLEU:
+
+```bash
+pip install "OpenSTBench[tokenizer-ja]"  # Japanese
+pip install "OpenSTBench[tokenizer-ko]"  # Korean
+```
+
+```python
+scores = evaluator.evaluate_all(
+    reference=["今日は天気がとても良いです。"],
+    target_text=["今日は天気がとても良いです。"],
+    asr_text=["今日は天気がとても良いです。"],
+    target_lang="ja",
+)
+```
+
+For streaming latency, pass the target language and let `auto` choose the
+unit:
+
+```bash
+python -m openstbench.latency.cli \
+  --source data/source.txt --target data/ref.txt \
+  --task s2t --agent-script my_agent.py --agent-class MyAgent \
+  --target-language ja --latency-unit auto
+```
+
+See [translation_eval.py](examples/python/translation_eval.py),
+[speech_quality_eval.py](examples/python/speech_quality_eval.py), and
+[latency_eval.py](examples/python/latency_eval.py) for complete parameter
+templates. Cantonese and other languages unsupported by a selected Whisper
+checkpoint require a custom `ASRBackend` or precomputed `asr_text`.
+
 ## Examples
 
 Complete parameter templates are kept in `examples/`. The README intentionally stays compact; use these files for configurable parameters, input formats, and output fields.
@@ -134,8 +206,7 @@ Complete parameter templates are kept in `examples/`. The README intentionally s
 - `examples/python/speech_quality_eval.py`
 - `examples/python/speaker_similarity_eval.py`
 - `examples/python/emotion_eval.py`
-- `examples/python/paralinguistic_eval.py`
-- `examples/python/paralinguistic_identity_baseline.py`
+- `examples/python/acoustic_event_eval.py`
 - `examples/python/temporal_consistency_eval.py`
 - `examples/python/latency_eval.py`
 - `examples/bash/install_extras.sh`
@@ -151,7 +222,10 @@ python -m openstbench.latency.cli --help
 
 - Text inputs generally accept `list[str]`, one-sample-per-line `.txt` files, and `.json` files where supported by the evaluator.
 - Audio inputs generally accept folders, `list[str]`, `.txt` path lists, and `.json` path lists where supported by the evaluator.
-- For `zh`, `ja`, and `ko`, speech consistency reports `CER_Consistency`; other languages report `WER_Consistency`.
+- Speech consistency reports `CER_Consistency` for `zh`, `yue`, `ja`, `ko`, `th`, `lo`, `km`, `my`, `bo`, and `dz`; space-delimited languages report `WER_Consistency`.
+- BLEU keeps the existing `13a` mapping for English and other space-delimited languages and `zh` for Chinese. It uses `zh` for Cantonese, `ja-mecab` for Japanese, `ko-mecab` for Korean, and `char` for the other non-space languages listed above.
+- `ASRRouter` can route target languages to different `WhisperASRBackend` checkpoints or custom `ASRBackend` implementations. If a Whisper checkpoint does not expose the requested language, ASR returns an unavailable/empty transcript instead of passing an invalid language token to the model.
+- Latency tokenization accepts `unit="auto"` (CLI: `--latency-unit auto`) together with a target language. Existing explicit `word` and `char` behavior is unchanged.
 - Evaluators that accept pretrained model sources use a local-first rule. If the supplied local path exists, OpenSTBench uses it; otherwise it falls back to the configured remote model id.
 - Optional dependencies are loaded only when the corresponding evaluator needs them.
 - MetricX is enabled by default in `TranslationEvaluator`. It follows the official google-research/metricx README, uses text only, reports error scores in `[0, 25]` where lower is better, and can be disabled with `use_metricx=False`.
@@ -164,7 +238,7 @@ python -m openstbench.latency.cli --help
 - [sacreBLEU](https://github.com/mjpost/sacrebleu), [COMET](https://github.com/Unbabel/COMET), [MetricX](https://github.com/google-research/metricx), and [bleurt-pytorch](https://github.com/lucadiliello/bleurt-pytorch), a PyTorch port of [BLEURT](https://github.com/google-research/bleurt), for translation quality evaluation
 - [Whisper](https://github.com/openai/whisper), [SpeechMOS/UTMOS](https://github.com/tarepan/SpeechMOS), [Resemblyzer](https://github.com/resemble-ai/Resemblyzer), and [WavLM](https://github.com/microsoft/unilm/tree/master/wavlm) for speech quality and speaker similarity evaluation
 - [FunASR](https://github.com/modelscope/FunASR) and [Emotion2Vec](https://modelscope.cn/models/iic/emotion2vec_plus_large) for emotion preservation evaluation
-- [CLAP](https://huggingface.co/laion/clap-htsat-fused) and [Hugging Face Transformers](https://github.com/huggingface/transformers) for paralinguistic event evaluation
+- [PretrainedSED](https://github.com/fschmid56/PretrainedSED), BEATs, and `sed-scores-eval` for acoustic-event evaluation
 
 ## Citation
 If you find our work useful, please cite as：

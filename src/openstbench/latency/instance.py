@@ -13,6 +13,7 @@ import math
 import soundfile
 from pathlib import Path
 from .basics import EmptySegment, SpeechSegment, Segment
+from .utils import tokenize_latency_units
 
 class Instance:
     def __init__(self, index: int, source_path, reference=None, output_dir="./output"):
@@ -80,11 +81,21 @@ class Instance:
     def get_prediction_raw(self): return self.prediction_list # Returns the raw list for quality evaluation
 
 class SpeechToTextInstance(Instance):
-    def __init__(self, index, source_path, reference=None, output_dir="./output"):
+    def __init__(
+        self,
+        index,
+        source_path,
+        reference=None,
+        output_dir="./output",
+        latency_unit="word",
+        target_language=None,
+    ):
         data, sr = soundfile.read(source_path, dtype="float32")
         self.samples = data.tolist()
         self.sample_rate = sr
         self.source_finished_reading = False
+        self.latency_unit = latency_unit
+        self.target_language = target_language
         super().__init__(index, source_path, reference, output_dir)
 
     def len_sample_to_ms(self, length): return length * 1000 / self.sample_rate
@@ -117,7 +128,15 @@ class SpeechToTextInstance(Instance):
             self.add_model_inference_time(seg.config.get("model_inference_time"))
         
         current_time = time.perf_counter()
-        content_list = seg.content.strip().split()
+        if self.latency_unit == "auto":
+            content_list = tokenize_latency_units(
+                seg.content,
+                unit="auto",
+                language=self.target_language,
+            )
+        else:
+            # Preserve the existing S2T behavior for explicit word/char modes.
+            content_list = seg.content.strip().split()
         self.prediction_list += content_list
         self.append_prediction_text(seg.content, source="native_transcript")
         
@@ -128,16 +147,45 @@ class SpeechToTextInstance(Instance):
         self.elapsed += [curr_elapsed] * len(content_list)
         self.finish_prediction = seg.finished
 
-    def get_prediction_content(self): return " ".join(self.prediction_list)
+    def get_prediction_content(self):
+        if self.latency_unit == "auto":
+            return self.prediction_text
+        return " ".join(self.prediction_list)
     
     @property
     def source_length(self): return self.len_sample_to_ms(len(self.samples))
     @property
-    def reference_length(self): return len(self.reference.split()) if self.reference else 0
+    def reference_length(self):
+        if not self.reference:
+            return 0
+        if self.latency_unit == "auto":
+            return len(
+                tokenize_latency_units(
+                    self.reference,
+                    unit="auto",
+                    language=self.target_language,
+                )
+            )
+        return len(self.reference.split())
 
 class SpeechToSpeechInstance(SpeechToTextInstance):
-    def __init__(self, index, source_path, reference=None, output_dir="./output"):
-        super().__init__(index, source_path, reference, output_dir)
+    def __init__(
+        self,
+        index,
+        source_path,
+        reference=None,
+        output_dir="./output",
+        latency_unit="word",
+        target_language=None,
+    ):
+        super().__init__(
+            index,
+            source_path,
+            reference,
+            output_dir,
+            latency_unit=latency_unit,
+            target_language=target_language,
+        )
         self.target_sample_rate = 16000
 
     def receive_prediction(self, seg: Segment):

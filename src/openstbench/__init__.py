@@ -9,24 +9,18 @@ actually accessed.
 from importlib import import_module
 from typing import Dict, Tuple
 
-__version__ = "1.2.6"
+__version__ = "1.3.0"
 
 __all__ = [
     "TranslationEvaluator",
+    "ASRBackend",
+    "ASRRouter",
+    "WhisperASRBackend",
     "EmotionEvaluator",
-    "AcousticEvent",
-    "ParalinguisticEvaluator",
-    "BaseAudioEventLocalizer",
-    "ClapSlidingWindowEventLocalizer",
-    "EventMatchingConfig",
-    "EventLocalizationConfig",
-    "EventPredictionConfig",
-    "ParalinguisticSample",
-    "load_paralinguistic_manifest",
-    "load_paralinguistic_samples",
-    "load_paralinguistic_audio_from_folder",
-    "build_paralinguistic_inputs",
-    "evaluate_paralinguistic_dataset",
+    "AcousticEventEvaluator",
+    "BEATsStrongEventDetector",
+    "SEDFrameScores",
+    "compute_event_content_map",
     "SpeechQualityEvaluator",
     "TemporalConsistencyEvaluator",
     "LatencyEvaluator",
@@ -48,6 +42,7 @@ __all__ = [
 
 
 _EXPORT_SPECS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("asr_backend", ("ASRBackend", "ASRRouter", "WhisperASRBackend")),
     (
         "translation_evaluator",
         (
@@ -58,21 +53,12 @@ _EXPORT_SPECS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ),
     ("emotion_evaluator", ("EmotionEvaluator",)),
     (
-        "paralinguistic_evaluator",
+        "acoustic_event_evaluator",
         (
-            "AcousticEvent",
-            "BaseAudioEventLocalizer",
-            "ClapSlidingWindowEventLocalizer",
-            "EventMatchingConfig",
-            "EventLocalizationConfig",
-            "EventPredictionConfig",
-            "ParalinguisticEvaluator",
-            "ParalinguisticSample",
-            "build_paralinguistic_inputs",
-            "evaluate_paralinguistic_dataset",
-            "load_audio_from_folder",
-            "load_paralinguistic_manifest",
-            "load_paralinguistic_samples",
+            "AcousticEventEvaluator",
+            "BEATsStrongEventDetector",
+            "SEDFrameScores",
+            "compute_event_content_map",
         ),
     ),
     ("speech_quality_evaluator", ("SpeechQualityEvaluator",)),
@@ -99,10 +85,7 @@ _SYMBOL_TO_MODULE: Dict[str, str] = {}
 
 for _module_name, _names in _EXPORT_SPECS:
     for _name in _names:
-        if _module_name == "paralinguistic_evaluator" and _name == "load_audio_from_folder":
-            _SYMBOL_TO_MODULE["load_paralinguistic_audio_from_folder"] = _module_name
-        else:
-            _SYMBOL_TO_MODULE[_name] = _module_name
+        _SYMBOL_TO_MODULE[_name] = _module_name
 
 
 def _load_module_exports(module_name: str) -> None:
@@ -115,10 +98,7 @@ def _load_module_exports(module_name: str) -> None:
         return
 
     for name in names:
-        if module_name == "paralinguistic_evaluator" and name == "load_paralinguistic_audio_from_folder":
-            globals()[name] = getattr(module, "load_audio_from_folder")
-        else:
-            globals()[name] = getattr(module, name)
+        globals()[name] = getattr(module, name)
         _IMPORT_ERRORS.pop(name, None)
 
 

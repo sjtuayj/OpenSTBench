@@ -14,11 +14,14 @@ Required evaluation inputs:
 Configurable LatencyEvaluator parameters:
 - segment_size: source chunk duration in milliseconds.
 - poll_interval_ms: loop polling interval in milliseconds.
-- latency_unit: "word" or "char" tokenization for text latency.
+- latency_unit: "word", "char", or "auto" tokenization for text latency.
+- target_language: language code used when latency_unit="auto" and by S2S ASR
+  fallback routing.
 - asr_fallback_for_s2s_alignment: transcribe S2S output if no transcript is
   supplied by the agent.
 - asr_model: Whisper model name/path for S2S transcript fallback.
 - asr_device: optional device for ASR fallback.
+- asr_backend/asr_router: optional custom ASR configuration for S2S fallback.
 - alignment_acoustic_model: MFA acoustic model name for speech alignment.
 - alignment_dictionary_model: MFA dictionary model name for speech alignment.
 
@@ -37,12 +40,16 @@ Output metrics:
 - End_Action_Delay_(CustomATD_ms)
 - Real_Time_Factor_(RTF)
 - Model_Generate_RTF
+
+Explicit "word" and "char" retain their historical behavior. Only "auto"
+selects word/char from target_language. MFA acoustic and dictionary models are
+not selected automatically; configure matching models manually for S2S.
 """
 
 
 class WaitUntilEndAgent(GenericAgent):
     def fake_model_generate(self):
-        return "hello world"
+        return "こんにちは世界"
 
     def policy(self, states=None):
         states = states or self.states
@@ -66,17 +73,20 @@ def main():
         agent=agent,
         segment_size=20,
         poll_interval_ms=10.0,
-        latency_unit="char",
+        latency_unit="auto",
+        target_language="ja",
         asr_fallback_for_s2s_alignment=True,
         asr_model="medium",
         asr_device=None,
-        alignment_acoustic_model="mandarin_mfa",
-        alignment_dictionary_model="mandarin_mfa",
+        # These are unused for the S2T example. For S2S, replace them with
+        # target-language-compatible MFA models.
+        alignment_acoustic_model="english_mfa",
+        alignment_dictionary_model="english_mfa",
     )
 
     evaluator.run(
         source_files=["./data/a.wav", "./data/b.wav"],
-        ref_files=["你好", "世界"],
+        ref_files=["こんにちは", "世界"],
         task="s2t",
         output_dir="./latency_output",
         visualize=False,
