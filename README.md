@@ -198,6 +198,28 @@ See [translation_eval.py](examples/python/translation_eval.py),
 templates. Cantonese and other languages unsupported by a selected Whisper
 checkpoint require a custom `ASRBackend` or precomputed `asr_text`.
 
+## Supported languages
+
+OpenSTBench's built-in language policy is defined in
+`src/openstbench/language_policy.py`. `target_lang` accepts normalized
+ISO-style language codes and common aliases, including `eng -> en`,
+`cmn/zho/chi -> zh`, `jpn -> ja`, and `kor -> ko`.
+
+OpenSTBench does not reject language codes that are not listed below. For
+unlisted languages, translation metrics use the default space-delimited policy:
+SacreBLEU `13a`, `WER_Consistency`, and word-level latency tokenization. ASR
+availability is backend-dependent: use a compatible `WhisperASRBackend`, a
+custom `ASRBackend`, or precomputed `asr_text`.
+
+| Language group | `target_lang` | BLEU tokenizer | Consistency metric | `latency_unit="auto"` | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Chinese | `zh` | `zh` | `CER_Consistency` | `char` | Aliases include `cmn`, `zho`, `chi` |
+| Cantonese | `yue` | `zh` | `CER_Consistency` | `char` | Keep as a separate ASR route; may require a custom backend or `asr_text` |
+| Japanese | `ja` | `ja-mecab` | `CER_Consistency` | `char` | Install `OpenSTBench[tokenizer-ja]` for BLEU |
+| Korean | `ko` | `ko-mecab` | `CER_Consistency` | `char` | Install `OpenSTBench[tokenizer-ko]` for BLEU |
+| Thai, Lao, Khmer, Burmese, Tibetan, Dzongkha | `th`, `lo`, `km`, `my`, `bo`, `dz` | `char` | `CER_Consistency` | `char` | ASR support depends on the configured backend |
+| Space-delimited and default languages | `en`, `fr`, `de`, `es`, ... | `13a` | `WER_Consistency` | `word` | Unknown or unlisted language codes fall back to this policy |
+
 ## Examples
 
 Complete parameter templates are kept in `examples/`. The README intentionally stays compact; use these files for configurable parameters, input formats, and output fields.
@@ -222,8 +244,7 @@ python -m openstbench.latency.cli --help
 
 - Text inputs generally accept `list[str]`, one-sample-per-line `.txt` files, and `.json` files where supported by the evaluator.
 - Audio inputs generally accept folders, `list[str]`, `.txt` path lists, and `.json` path lists where supported by the evaluator.
-- Speech consistency reports `CER_Consistency` for `zh`, `yue`, `ja`, `ko`, `th`, `lo`, `km`, `my`, `bo`, and `dz`; space-delimited languages report `WER_Consistency`.
-- BLEU keeps the existing `13a` mapping for English and other space-delimited languages and `zh` for Chinese. It uses `zh` for Cantonese, `ja-mecab` for Japanese, `ko-mecab` for Korean, and `char` for the other non-space languages listed above.
+- Built-in language tokenization, speech-consistency, and `latency_unit="auto"` behavior are summarized in [Supported languages](#supported-languages).
 - `ASRRouter` can route target languages to different `WhisperASRBackend` checkpoints or custom `ASRBackend` implementations. If a Whisper checkpoint does not expose the requested language, ASR returns an unavailable/empty transcript instead of passing an invalid language token to the model.
 - Latency tokenization accepts `unit="auto"` (CLI: `--latency-unit auto`) together with a target language. Existing explicit `word` and `char` behavior is unchanged.
 - Evaluators that accept pretrained model sources use a local-first rule. If the supplied local path exists, OpenSTBench uses it; otherwise it falls back to the configured remote model id.

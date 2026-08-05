@@ -193,6 +193,26 @@ python -m openstbench.latency.cli \
 checkpoint 不支持粤语等目标语言，需要配置自定义 `ASRBackend` 或提供预计算
 `asr_text`。
 
+## 支持语种
+
+OpenSTBench 的内置语言策略定义在 `src/openstbench/language_policy.py`。
+`target_lang` 接受规范化后的 ISO 风格语言码，并支持常见别名，例如
+`eng -> en`、`cmn/zho/chi -> zh`、`jpn -> ja` 和 `kor -> ko`。
+
+OpenSTBench 不会主动拒绝下表之外的语言码。对未列出的语言，翻译指标使用
+默认的空格分词策略：SacreBLEU `13a`、`WER_Consistency` 和 word 级延迟分词。
+ASR 是否可用取决于后端：请使用兼容的 `WhisperASRBackend`、自定义
+`ASRBackend`，或直接提供预计算的 `asr_text`。
+
+| 语言组 | `target_lang` | BLEU tokenizer | 一致性指标 | `latency_unit="auto"` | 说明 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 中文 | `zh` | `zh` | `CER_Consistency` | `char` | 别名包括 `cmn`、`zho`、`chi` |
+| 粤语 | `yue` | `zh` | `CER_Consistency` | `char` | 保留为独立 ASR 路由；可能需要自定义 backend 或 `asr_text` |
+| 日语 | `ja` | `ja-mecab` | `CER_Consistency` | `char` | BLEU 需要安装 `OpenSTBench[tokenizer-ja]` |
+| 韩语 | `ko` | `ko-mecab` | `CER_Consistency` | `char` | BLEU 需要安装 `OpenSTBench[tokenizer-ko]` |
+| 泰语、老挝语、高棉语、缅甸语、藏语、宗卡语 | `th`、`lo`、`km`、`my`、`bo`、`dz` | `char` | `CER_Consistency` | `char` | ASR 支持取决于配置的后端 |
+| 空格分词和默认语言 | `en`、`fr`、`de`、`es`、... | `13a` | `WER_Consistency` | `word` | 未知或未列出的语言码回退到该策略 |
+
 ## 示例
 
 完整参数模板放在 `examples/` 中。README 只保留概览；每个示例文件中都列出了可配置参数、输入格式和输出字段。
@@ -217,8 +237,7 @@ python -m openstbench.latency.cli --help
 
 - 文本输入通常支持 `list[str]`、每行一个样本的 `.txt` 文件，以及对应评测器支持的 `.json` 文件。
 - 音频输入通常支持文件夹、`list[str]`、`.txt` 路径列表，以及对应评测器支持的 `.json` 路径列表。
-- 对 `zh`、`yue`、`ja`、`ko`、`th`、`lo`、`km`、`my`、`bo`、`dz`，语音文本一致性返回 `CER_Consistency`；使用空格分词的语言返回 `WER_Consistency`。
-- BLEU 保持英语及其他空格语言使用 `13a`、中文使用 `zh` 的现有口径；粤语使用 `zh`，日语使用 `ja-mecab`，韩语使用 `ko-mecab`，上述其他无空格语言使用 `char`。
+- 内置语言分词、语音文本一致性和 `latency_unit="auto"` 行为见 [支持语种](#支持语种)。
 - `ASRRouter` 可将不同目标语言路由到不同的 `WhisperASRBackend` checkpoint 或自定义 `ASRBackend`。当 Whisper checkpoint 不支持目标语言时，不会把非法语言码传给模型，而是返回不可用的空转写。
 - 延迟分词新增 `unit="auto"`（CLI：`--latency-unit auto`），并配合目标语言自动选择 word/char；原有显式 `word`、`char` 行为不变。
 - 对接受预训练模型来源的评测器，模型来源采用本地优先规则：如果传入的本地路径存在，则使用本地路径；否则回退到配置的远程模型 id。
