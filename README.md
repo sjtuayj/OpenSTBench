@@ -68,11 +68,11 @@ pip install git+https://github.com/lucadiliello/bleurt-pytorch.git
 | Dimension | Evaluator | System type | Main outputs |
 | :--- | :--- | :--- | :--- |
 | Translation Quality | `TranslationEvaluator` | S2TT, S2ST text or generated speech | `sacreBLEU`, `chrF++`, `COMET`, `BLEURT`, `MetricX`, `MetricX_QE`, and their `ASR_` variants |
-| Speech Quality | `SpeechQualityEvaluator` | S2ST | `UTMOS`, `WER_Consistency`, `CER_Consistency` |
-| Speech Quality | `SpeakerSimilarityEvaluator` | S2ST | `average_wavlm_large_similarity`, `average_resemblyzer_similarity` |
-| Speech Quality | `EmotionEvaluator` | S2ST | `Emotion2Vec_Cosine_Similarity`, `Audio_Emotion_Accuracy` |
+| Speech Quality | `SpeechQualityEvaluator` | S2ST | `UTMOS`, `WER`, `CER` |
+| Speech Quality | `SpeakerSimilarityEvaluator` | S2ST | `Spk_SIM_wavlm`, `Spk_SIM_resemblyzer` |
+| Speech Quality | `EmotionEvaluator` | S2ST | `Emotion2Vec_Cosine_Similarity` |
 | Speech Quality | `AcousticEventEvaluator` / `BEATsStrongEventDetector` | S2ST | `event_content_map` |
-| Temporal Quality | `TemporalConsistencyEvaluator` | S2ST | `Duration_Consistency_SLC_0.2`, `Duration_Consistency_SLC_0.4` |
+| Temporal Quality | `TemporalConsistencyEvaluator` | S2ST | `SLC_0.2`, `SLC_0.4` |
 | Temporal Quality | `LatencyEvaluator` | Streaming S2TT/S2ST | `First_Audio_Delay_(StartOffset_ms)`, `Overall_Translation_Delay_(ATD_ms)`, `End_Action_Delay_(CustomATD_ms)`, `Real_Time_Factor_(RTF)` |
 
 Offline and streaming are supported system settings, not separate metric dimensions. Use the evaluators that match the available outputs: text, generated speech, source/target audio pairs, event annotations, or streaming traces.
